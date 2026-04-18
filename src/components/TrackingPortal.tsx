@@ -23,6 +23,14 @@ export default function TrackingPortal() {
   const [shipment, setShipment] = useState<Shipment | null>(null);
   const [loading, setLoading] = useState(false);
   const [hasSearched, setHasSearched] = useState(false);
+  const [errorStatus, setErrorStatus] = useState<string | null>(null);
+
+  // Check Supabase Configuration on load
+  useEffect(() => {
+    if (!supabase) {
+      setErrorStatus("System initialization failed. Please contact support.");
+    }
+  }, []);
 
   const formatId = (value: string) => {
     const digits = value.replace(/\D/g, '').slice(0, 12);
@@ -55,13 +63,22 @@ export default function TrackingPortal() {
         .eq('id', id)
         .maybeSingle();
 
-      if (error || !data) {
+      if (error) {
+        console.error('Supabase Error:', error);
+        setErrorStatus("Database connection error. Please try again later.");
+        setShipment(null);
+        return;
+      }
+
+      if (!data) {
         setShipment(null);
       } else {
         setShipment(data as Shipment);
+        setErrorStatus(null);
       }
     } catch (err) {
-      console.error(err);
+      console.error('Fetch Error:', err);
+      setErrorStatus("An unexpected error occurred. Please refresh the page.");
       setShipment(null);
     } finally {
       setLoading(false);
@@ -118,6 +135,11 @@ export default function TrackingPortal() {
       <main className="pt-[84px] pb-20 px-4 max-w-lg mx-auto space-y-6">
         {/* Search Engine */}
         <div className="space-y-4">
+          {errorStatus && (
+            <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-xl text-sm font-medium animate-in fade-in slide-in-from-top-4">
+              {errorStatus}
+            </div>
+          )}
           <div className="flex gap-2">
             <div className="relative flex-grow">
               <Input
