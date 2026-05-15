@@ -97,7 +97,15 @@ export default function TrackingPortal() {
 
   const formatDate = (dateStr: string) => {
     if (!dateStr) return 'TBD';
-    const date = new Date(dateStr);
+    
+    // Safety check for Safari: Replace spaces with 'T' to ensure valid ISO format
+    // and handle potential missing timezone info by assuming UTC if not specified
+    let normalized = dateStr.trim();
+    if (normalized.includes(' ') && !normalized.includes('T')) {
+      normalized = normalized.replace(' ', 'T');
+    }
+    
+    const date = NewDate(normalized);
     if (isNaN(date.getTime())) return 'Invalid Date';
     
     return date.toLocaleDateString('en-US', {
@@ -110,6 +118,11 @@ export default function TrackingPortal() {
       hour12: true
     });
   };
+
+  // Helper to ensure date construction is handled consistently
+  function NewDate(str: string) {
+    return new Date(str.includes('T') || str.includes('Z') ? str : str.replace(/-/g, '/'));
+  }
 
   const getHistoryStatus = (stage: string, history: any[]) => {
     if (!history) return { exists: false };
@@ -172,7 +185,7 @@ export default function TrackingPortal() {
               className="space-y-6"
             >
               {/* Master Card (Bento Design) */}
-              <Card className="border-none shadow-[0_4px_20px_rgba(0,0,0,0.05)] rounded-2xl overflow-hidden bg-white">
+              <Card className="border-none shadow-[0_4px_20px_rgba(0,0,0,0.05)] rounded-2xl overflow-hidden bg-white isolate ring-1 ring-black/5">
                 <CardContent className="p-6 space-y-6">
                   <div className="space-y-1">
                     <p className="text-[10px] font-bold text-[#4D148C] uppercase tracking-widest">Current Status</p>

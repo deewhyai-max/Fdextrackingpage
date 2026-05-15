@@ -89,5 +89,19 @@
   body {
     @apply bg-background text-foreground;
     font-family: 'Helvetica Neue', Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  /* Browser Safety Resets */
+  input[type="text"] {
+    -webkit-appearance: none;
+    appearance: none;
+    border-radius: var(--radius-xl);
+  }
+
+  /* Fix for Safari tap highlight */
+  * {
+    -webkit-tap-highlight-color: transparent;
   }
 }
