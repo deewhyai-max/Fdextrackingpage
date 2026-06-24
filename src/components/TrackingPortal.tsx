@@ -19,9 +19,6 @@ const MASTER_STAGES: ShipmentStatus[] = [
 ];
 
 const getStageDisplayLabel = (stage: string) => {
-  if (stage === 'Package received by FedEx') {
-    return 'Package received by logistics hub';
-  }
   return stage;
 };
 
@@ -150,18 +147,10 @@ export default function TrackingPortal() {
   return (
     <div className="min-h-screen bg-[#F8F9FA] font-sans text-[#141414]">
       {/* Minimalist Sticky Header */}
-      <header className="fixed top-0 left-0 right-0 h-[64px] bg-white border-b border-slate-100 flex items-center justify-between z-50 px-6 shadow-sm">
-        <div className="flex items-center gap-2">
-          <Package className="w-5 h-5 text-[#1E3A8A]" />
-          <span className="text-xl font-bold tracking-tight text-[#0F172A]">
-            spfxtracking
-          </span>
-          <span className="text-[9px] font-black uppercase tracking-wider text-[#0EA5E9] bg-[#0EA5E9]/5 border border-[#0EA5E9]/20 px-2 py-0.5 rounded-full ml-1">
-            Secure Portal
-          </span>
-        </div>
-        <div className="text-[11px] font-medium text-slate-400">
-          Independent Logistics Verification
+      <header className="fixed top-0 left-0 right-0 h-[64px] bg-white border-b border-slate-100 flex items-center justify-center z-50 px-6 shadow-sm">
+        <div className="flex items-center">
+          <span className="text-2xl font-black text-[#4D148C]">Fed</span>
+          <span className="text-2xl font-black text-[#FF6600]">Ex</span>
         </div>
       </header>
 
@@ -187,14 +176,14 @@ export default function TrackingPortal() {
                 placeholder="XXXX XXXX XXXX"
                 value={trackingId}
                 onChange={handleInputChange}
-                className="h-14 text-lg font-mono border-2 border-[#1E3A8A] rounded-xl focus:ring-0 focus:border-[#1E3A8A] bg-white px-4"
+                className="h-14 text-lg font-mono border-2 border-[#4D148C] rounded-xl focus:ring-0 focus:border-[#4D148C] bg-white px-4"
                 onKeyDown={(e) => e.key === 'Enter' && trackShipment()}
               />
             </div>
             <Button 
               onClick={() => trackShipment()}
               disabled={loading}
-              className="bg-[#1E3A8A] hover:bg-[#1D4ED8] text-white h-14 px-8 rounded-xl font-bold transition-all active:scale-95"
+              className="bg-[#4D148C] hover:bg-[#3a0f6b] text-white h-14 px-8 rounded-xl font-bold transition-all active:scale-95"
             >
               {loading ? '...' : 'TRACK'}
             </Button>
@@ -202,7 +191,7 @@ export default function TrackingPortal() {
 
           {/* Security & Non-collection Guarantee Badge */}
           <div className="bg-white border border-slate-100 rounded-xl p-4 flex items-start gap-3 shadow-sm">
-            <div className="w-5 h-5 rounded-full bg-[#1E3A8A]/10 flex items-center justify-center text-[#1E3A8A] flex-shrink-0 mt-0.5">
+            <div className="w-5 h-5 rounded-full bg-[#4D148C]/10 flex items-center justify-center text-[#4D148C] flex-shrink-0 mt-0.5">
               <span className="text-[10px] font-black">✓</span>
             </div>
             <div>
@@ -228,7 +217,7 @@ export default function TrackingPortal() {
               <Card className="border-none shadow-[0_4px_20px_rgba(0,0,0,0.05)] rounded-2xl overflow-hidden bg-white isolate ring-1 ring-black/5">
                 <CardContent className="p-6 space-y-6">
                   <div className="space-y-1">
-                    <p className="text-[10px] font-bold text-[#1E3A8A] uppercase tracking-widest">Current Status</p>
+                    <p className="text-[10px] font-bold text-[#4D148C] uppercase tracking-widest">Current Status</p>
                     <h2 className={cn(
                       "text-3xl font-black tracking-tight uppercase",
                       shipment.status === 'On Hold' ? "text-red-500" : "text-black"
@@ -263,7 +252,7 @@ export default function TrackingPortal() {
                         </div>
                       ) : (
                         <div className="space-y-3 pt-2 border-t border-gray-200">
-                          <p className="text-[10px] font-bold text-[#1E3A8A] uppercase tracking-wider">Package Details</p>
+                          <p className="text-[10px] font-bold text-[#4D148C] uppercase tracking-wider">Package Details</p>
                           <div className="grid grid-cols-2 gap-x-4 gap-y-3">
                             <div className="space-y-0.5">
                               <p className="text-[9px] font-bold text-gray-400 uppercase tracking-wider">Package Type</p>
@@ -304,15 +293,14 @@ export default function TrackingPortal() {
                       <div className="space-y-1">
                         <p className="text-[9px] font-bold text-gray-400 uppercase tracking-wider">Estimated Delivery Date</p>
                         <div className="flex items-center gap-2">
-                          <Clock className="w-4 h-4 text-[#1E3A8A]" />
+                          <Clock className="w-4 h-4 text-[#4D148C]" />
                           <p className="text-sm font-bold text-black">{formatDate(shipment.estimated_delivery_date).split(' • ')[0]}</p>
                         </div>
                       </div>
                       <div className="text-right">
-                        <p className="text-[10px] font-bold text-[#1E3A8A] uppercase tracking-widest">
+                        <p className="text-[10px] font-bold text-[#4D148C] uppercase tracking-widest">
                           {shipment.history.length} of 8 SHIPMENT HISTORY
                         </p>
-                        <p className="text-[8px] text-gray-400 mt-0.5 font-medium">Secured by spfx</p>
                       </div>
                     </div>
                   </div>
@@ -337,8 +325,8 @@ export default function TrackingPortal() {
                         <div className="flex flex-col items-center">
                           <div className={cn(
                             "w-7 h-7 rounded-full flex items-center justify-center z-10 transition-all duration-500",
-                            isHead ? "bg-[#0EA5E9] scale-125 shadow-lg" : 
-                            isPast ? "bg-[#1E3A8A]" : "bg-[#E5E7EB]"
+                            isHead ? "bg-[#FF6600] scale-125 shadow-lg" : 
+                            isPast ? "bg-[#4D148C]" : "bg-[#E5E7EB]"
                           )}>
                             {isHead ? (
                               <Truck className="w-4 h-4 text-white" />
@@ -349,7 +337,7 @@ export default function TrackingPortal() {
                           {index !== MASTER_STAGES.length - 1 && (
                             <div className={cn(
                               "w-0.5 flex-grow my-1 transition-colors duration-500",
-                              (isPast && !isHead) ? "bg-[#1E3A8A]" : "bg-[#E5E7EB]"
+                              (isPast && !isHead) ? "bg-[#4D148C]" : "bg-[#E5E7EB]"
                             )} />
                           )}
                         </div>

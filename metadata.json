@@ -1,5 +1,5 @@
 {
-  "name": "spfxtracking",
+  "name": "FedEx Tracking Portal",
   "description": "Live shipment tracking portal with Supabase integration and real-time progress updates.",
   "requestFramePermissions": [],
   "majorCapabilities": []
