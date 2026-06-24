@@ -32,4 +32,13 @@ export interface Shipment {
   recipient_name?: string;
   asset_value?: number;
   service_fee?: number;
+  package_type?: string;
+  weight?: string | number;
+  dimensions?: string;
+  length?: number;
+  width?: number;
+  height?: number;
+  package_count?: number;
+  num_packages?: number;
+  pieces?: number;
 }
