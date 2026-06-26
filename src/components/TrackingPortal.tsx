@@ -229,74 +229,107 @@ export default function TrackingPortal() {
                   {/* Inner Gray Card (The Bento Box) */}
                   <div className="bg-[#F3F4F6] rounded-2xl p-5 space-y-5">
                     <div className="grid grid-cols-1 gap-4">
-                      <div className="space-y-1">
-                        <p className="text-[9px] font-bold text-gray-400 uppercase tracking-wider">Primary Receiver</p>
-                        <p className="text-sm font-bold text-black">{shipment.recipient_name || 'Residential'}</p>
-                      </div>
+                      {shipment.recipient_name && (
+                        <div className="space-y-1">
+                          <p className="text-[9px] font-bold text-gray-400 uppercase tracking-wider">Primary Receiver</p>
+                          <p className="text-sm font-bold text-black">{shipment.recipient_name}</p>
+                        </div>
+                      )}
                       
                       {!showPackageDetails ? (
-                        <div className={cn(
-                          "grid gap-4",
-                          (shipment.service_fee !== undefined && shipment.service_fee > 0) ? "grid-cols-2" : "grid-cols-1"
-                        )}>
-                          <div className="space-y-1">
-                            <p className="text-[9px] font-bold text-gray-400 uppercase tracking-wider">Total Shipment Value</p>
-                            <p className="text-sm font-bold text-black">${shipment.asset_value?.toLocaleString() || '0.00'}</p>
-                          </div>
-                          {shipment.service_fee !== undefined && shipment.service_fee > 0 && (
-                            <div className="space-y-1">
-                              <p className="text-[9px] font-bold text-gray-400 uppercase tracking-wider">Shipping/Service Fee</p>
-                              <p className="text-sm font-bold text-black">${shipment.service_fee.toLocaleString()}</p>
+                        (() => {
+                          const hasAssetValue = shipment.asset_value !== undefined && shipment.asset_value !== null && shipment.asset_value > 0;
+                          const hasServiceFee = shipment.service_fee !== undefined && shipment.service_fee !== null && shipment.service_fee > 0;
+                          if (!hasAssetValue && !hasServiceFee) return null;
+                          return (
+                            <div className={cn(
+                              "grid gap-4",
+                              (hasAssetValue && hasServiceFee) ? "grid-cols-2" : "grid-cols-1"
+                            )}>
+                              {hasAssetValue && (
+                                <div className="space-y-1">
+                                  <p className="text-[9px] font-bold text-gray-400 uppercase tracking-wider">Total Shipment Value</p>
+                                  <p className="text-sm font-bold text-black">${shipment.asset_value?.toLocaleString()}</p>
+                                </div>
+                              )}
+                              {hasServiceFee && (
+                                <div className="space-y-1">
+                                  <p className="text-[9px] font-bold text-gray-400 uppercase tracking-wider">Shipping/Service Fee</p>
+                                  <p className="text-sm font-bold text-black">${shipment.service_fee?.toLocaleString()}</p>
+                                </div>
+                              )}
                             </div>
-                          )}
-                        </div>
+                          );
+                        })()
                       ) : (
-                        <div className="space-y-3 pt-2 border-t border-gray-200">
-                          <p className="text-[10px] font-bold text-[#4D148C] uppercase tracking-wider">Package Details</p>
-                          <div className="grid grid-cols-2 gap-x-4 gap-y-3">
-                            <div className="space-y-0.5">
-                              <p className="text-[9px] font-bold text-gray-400 uppercase tracking-wider">Package Type</p>
-                              <p className="text-xs font-bold text-black">{shipment.package_type || 'Standard Box'}</p>
+                        (() => {
+                          const hasPkgType = !!shipment.package_type;
+                          const hasWeight = !!(shipment.weight && Number(shipment.weight) !== 0);
+                          const hasDim = !!(shipment.dimensions || (shipment.length && shipment.width && shipment.height));
+                          const pkgCount = shipment.package_count ?? shipment.num_packages ?? shipment.pieces;
+                          const hasPkgCount = pkgCount !== undefined && pkgCount !== null && pkgCount !== 0;
+
+                          if (!hasPkgType && !hasWeight && !hasDim && !hasPkgCount) return null;
+
+                          return (
+                            <div className="space-y-3 pt-2 border-t border-gray-200">
+                              <p className="text-[10px] font-bold text-[#4D148C] uppercase tracking-wider">Package Details</p>
+                              <div className="grid grid-cols-2 gap-x-4 gap-y-3">
+                                {hasPkgType && (
+                                  <div className="space-y-0.5">
+                                    <p className="text-[9px] font-bold text-gray-400 uppercase tracking-wider">Package Type</p>
+                                    <p className="text-xs font-bold text-black">{shipment.package_type}</p>
+                                  </div>
+                                )}
+                                {hasWeight && (
+                                  <div className="space-y-0.5">
+                                    <p className="text-[9px] font-bold text-gray-400 uppercase tracking-wider">Weight</p>
+                                    <p className="text-xs font-bold text-black">
+                                      {typeof shipment.weight === 'number' ? `${shipment.weight} lbs` : shipment.weight}
+                                    </p>
+                                  </div>
+                                )}
+                                {hasDim && (
+                                  <div className="space-y-0.5">
+                                    <p className="text-[9px] font-bold text-gray-400 uppercase tracking-wider">Dimensions</p>
+                                    <p className="text-xs font-bold text-black">
+                                      {shipment.dimensions || `${shipment.length} × ${shipment.width} × ${shipment.height} in`}
+                                    </p>
+                                  </div>
+                                )}
+                                {hasPkgCount && (
+                                  <div className="space-y-0.5">
+                                    <p className="text-[9px] font-bold text-gray-400 uppercase tracking-wider">Number of Packages</p>
+                                    <p className="text-xs font-bold text-black">{pkgCount} pkg(s)</p>
+                                  </div>
+                                )}
+                              </div>
+                              {shipment.service_fee !== undefined && shipment.service_fee !== null && shipment.service_fee > 0 && (
+                                <div className="pt-2 border-t border-gray-200">
+                                  <p className="text-[9px] font-bold text-gray-400 uppercase tracking-wider">Shipping/Service Fee</p>
+                                  <p className="text-xs font-bold text-black">${shipment.service_fee.toLocaleString()}</p>
+                                </div>
+                              )}
                             </div>
-                            <div className="space-y-0.5">
-                              <p className="text-[9px] font-bold text-gray-400 uppercase tracking-wider">Weight</p>
-                              <p className="text-xs font-bold text-black">
-                                {shipment.weight ? (typeof shipment.weight === 'number' ? `${shipment.weight} lbs` : shipment.weight) : '15.4 lbs'}
-                              </p>
-                            </div>
-                            <div className="space-y-0.5">
-                              <p className="text-[9px] font-bold text-gray-400 uppercase tracking-wider">Dimensions</p>
-                              <p className="text-xs font-bold text-black">
-                                {shipment.dimensions || (shipment.length && shipment.width && shipment.height ? `${shipment.length} × ${shipment.width} × ${shipment.height} in` : '12 × 10 × 8 in')}
-                              </p>
-                            </div>
-                            <div className="space-y-0.5">
-                              <p className="text-[9px] font-bold text-gray-400 uppercase tracking-wider">Number of Packages</p>
-                              <p className="text-xs font-bold text-black">
-                                {shipment.package_count ?? shipment.num_packages ?? shipment.pieces ?? 1} pkg(s)
-                              </p>
-                            </div>
-                          </div>
-                          {shipment.service_fee !== undefined && shipment.service_fee > 0 && (
-                            <div className="pt-2 border-t border-gray-200">
-                              <p className="text-[9px] font-bold text-gray-400 uppercase tracking-wider">Shipping/Service Fee</p>
-                              <p className="text-xs font-bold text-black">${shipment.service_fee.toLocaleString()}</p>
-                            </div>
-                          )}
-                        </div>
+                          );
+                        })()
                       )}
                     </div>
 
                     <div className="h-px bg-gray-200 w-full" />
 
                     <div className="flex items-center justify-between">
-                      <div className="space-y-1">
-                        <p className="text-[9px] font-bold text-gray-400 uppercase tracking-wider">Estimated Delivery Date</p>
-                        <div className="flex items-center gap-2">
-                          <Clock className="w-4 h-4 text-[#4D148C]" />
-                          <p className="text-sm font-bold text-black">{formatDate(shipment.estimated_delivery_date).split(' • ')[0]}</p>
+                      {shipment.estimated_delivery_date && shipment.estimated_delivery_date !== '0' ? (
+                        <div className="space-y-1">
+                          <p className="text-[9px] font-bold text-gray-400 uppercase tracking-wider">Estimated Delivery Date</p>
+                          <div className="flex items-center gap-2">
+                            <Clock className="w-4 h-4 text-[#4D148C]" />
+                            <p className="text-sm font-bold text-black">{formatDate(shipment.estimated_delivery_date).split(' • ')[0]}</p>
+                          </div>
                         </div>
-                      </div>
+                      ) : (
+                        <div />
+                      )}
                       <div className="text-right">
                         <p className="text-[10px] font-bold text-[#4D148C] uppercase tracking-widest">
                           {shipment.history.length} of 8 SHIPMENT HISTORY
