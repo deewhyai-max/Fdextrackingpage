@@ -30,15 +30,37 @@ export interface Shipment {
   estimated_delivery_date: string;
   history: TrackingHistory[];
   recipient_name?: string;
+  recipient_address?: string;
+  receiver_address?: string;
   asset_value?: number;
   service_fee?: number;
+
+  // Sender details
+  sender_name?: string;
+  sender_address?: string;
+
+  // Currency & Service
+  currency?: string;
+  service_type?: string;
+
+  // Package specifications
   package_type?: string;
   weight?: string | number;
-  dimensions?: string;
+  weight_unit?: string;
   length?: number;
   width?: number;
   height?: number;
-  package_count?: number;
+  dimension_unit?: string;
   num_packages?: number;
+  package_count?: number;
   pieces?: number;
+  declared_value?: number;
+  dimensions?: string;
+
+  // Special handling & Delivery options
+  is_dry_ice?: boolean;
+  is_hazardous?: boolean;
+  is_saturday_delivery?: boolean;
+  signature_option?: string;
+  is_hold_at_location?: boolean;
 }

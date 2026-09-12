@@ -2,5 +2,5 @@
   "name": "FedEx Tracking Portal",
   "description": "Live shipment tracking portal with Supabase integration and real-time progress updates.",
   "requestFramePermissions": [],
-  "majorCapabilities": []
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }
