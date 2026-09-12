@@ -207,14 +207,14 @@ export default function TransitMap({ origin, currentLocation, destination, curre
     const map = L.map(mapContainerRef.current, {
       zoomControl: true,
       scrollWheelZoom: false,
-      attributionControl: false
+      attributionControl: true
     });
     mapInstanceRef.current = map;
 
-    // CartoDB Voyager / Positron tiles for high-contrast, professional logistics look
-    L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
+    // OpenStreetMap standard free tile URL without API keys or watermarks
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
       maxZoom: 19,
-      subdomains: 'abcd'
+      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap</a>'
     }).addTo(map);
 
     const originPoint = points.find(p => p.type === 'origin')!;
@@ -406,45 +406,45 @@ export default function TransitMap({ origin, currentLocation, destination, curre
   }, [points]);
 
   return (
-    <div className="bg-white rounded-2xl p-5 shadow-[0_4px_20px_rgba(0,0,0,0.05)] border border-slate-100 space-y-4 overflow-hidden">
+    <div className="bg-white rounded-2xl p-6 md:p-8 shadow-[0_4px_24px_rgba(0,0,0,0.06)] border border-slate-200/80 space-y-5 overflow-hidden">
       {/* Header bar with FedEx route summary */}
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-2">
-          <div className="w-8 h-8 rounded-lg bg-[#4D148C]/10 flex items-center justify-center text-[#4D148C]">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-4">
+        <div className="flex items-center gap-3">
+          <div className="w-9 h-9 rounded-xl bg-[#4D148C]/10 flex items-center justify-center text-[#4D148C] flex-shrink-0">
             <Navigation className="w-4 h-4" />
           </div>
           <div>
             <p className="text-[10px] font-bold text-[#4D148C] uppercase tracking-wider">Live Transit Route</p>
-            <h4 className="text-sm font-bold text-slate-900 flex items-center gap-1.5">
+            <h4 className="text-sm md:text-base font-bold text-slate-900 flex flex-wrap items-center gap-1.5">
               <span>{origin || 'Origin'}</span>
               <ArrowRight className="w-3.5 h-3.5 text-slate-400" />
-              <span className="text-[#FF6600]">{effectiveCurrent || 'Transit'}</span>
+              <span className="text-[#FF6600] font-extrabold">{effectiveCurrent || 'Transit'}</span>
               <ArrowRight className="w-3.5 h-3.5 text-slate-400" />
               <span>{destination || 'Destination'}</span>
             </h4>
           </div>
         </div>
 
-        <div className="flex items-center gap-3 text-xs font-semibold">
-          <span className="flex items-center gap-1 text-slate-600">
+        <div className="flex items-center gap-3 text-xs font-semibold bg-slate-50 px-3 py-1.5 rounded-xl border border-slate-100">
+          <span className="flex items-center gap-1.5 text-slate-600">
             <span className="w-2.5 h-2.5 rounded-full bg-[#4D148C]" /> Origin
           </span>
-          <span className="flex items-center gap-1 text-[#FF6600]">
+          <span className="flex items-center gap-1.5 text-[#FF6600]">
             <span className="w-2.5 h-2.5 rounded-full bg-[#FF6600] animate-pulse" /> Current
           </span>
-          <span className="flex items-center gap-1 text-emerald-600">
+          <span className="flex items-center gap-1.5 text-emerald-600">
             <span className="w-2.5 h-2.5 rounded-full bg-emerald-500" /> Destination
           </span>
         </div>
       </div>
 
       {/* Map Container */}
-      <div className="relative w-full h-[260px] md:h-[320px] rounded-xl overflow-hidden border border-slate-200 bg-slate-50">
+      <div className="relative w-full h-[280px] md:h-[360px] rounded-xl overflow-hidden border border-slate-200/90 bg-slate-100">
         {loading && (
-          <div className="absolute inset-0 bg-white/70 backdrop-blur-xs flex items-center justify-center z-10">
+          <div className="absolute inset-0 bg-white/80 backdrop-blur-xs flex items-center justify-center z-10">
             <div className="flex items-center gap-2 text-xs font-bold text-[#4D148C]">
               <Truck className="w-4 h-4 animate-bounce text-[#FF6600]" />
-              <span>Mapping route coordinates...</span>
+              <span>Plotting live logistics telemetry...</span>
             </div>
           </div>
         )}
@@ -452,12 +452,14 @@ export default function TransitMap({ origin, currentLocation, destination, curre
       </div>
 
       {/* Footer hint */}
-      <div className="flex items-center justify-between text-[11px] text-slate-500 pt-1">
+      <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-500 pt-1">
         <span className="flex items-center gap-1.5">
           <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
           <span>Real-time GPS telemetry routed via FedEx logistics network</span>
         </span>
-        <span className="text-[10px] text-slate-400 font-mono">LIVE TRACKING ACTIVE</span>
+        <span className="text-[10px] text-[#4D148C] font-mono font-bold uppercase tracking-wider bg-[#4D148C]/5 px-2 py-0.5 rounded border border-[#4D148C]/10">
+          LIVE TELEMETRY
+        </span>
       </div>
     </div>
   );
