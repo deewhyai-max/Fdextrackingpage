@@ -24,9 +24,13 @@ export interface TrackingHistory {
 
 export interface Shipment {
   id: string;
+  user_id?: string;
   status: ShipmentStatus;
-  origin: string;
-  destination: string;
+  origin?: string;
+  origin_city_state?: string;
+  destination?: string;
+  destination_address?: string;
+  created_at?: string;
   estimated_delivery_date: string;
   history: TrackingHistory[];
   recipient_name?: string;

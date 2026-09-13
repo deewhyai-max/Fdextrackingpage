@@ -61,8 +61,8 @@ const formatCurrency = (val?: number | null, currencyCode = 'USD'): string | nul
   }
 };
 
-export default function TrackingPortal() {
-  const [trackingId, setTrackingId] = useState('');
+export default function TrackingPortal({ initialId }: { initialId?: string } = {}) {
+  const [trackingId, setTrackingId] = useState(initialId ? initialId.replace(/\D/g, '').slice(0, 12).match(/.{1,4}/g)?.join(' ') || '' : '');
   const [shipment, setShipment] = useState<Shipment | null>(null);
   const [loading, setLoading] = useState(false);
   const [hasSearched, setHasSearched] = useState(false);
@@ -134,6 +134,13 @@ export default function TrackingPortal() {
   }, [trackingId]);
 
   useEffect(() => {
+    if (initialId) {
+      const formatted = formatId(initialId);
+      setTrackingId(formatted);
+      trackShipment(formatted);
+      return;
+    }
+
     const params = new URLSearchParams(window.location.search);
     const idFromUrl = params.get('id');
     if (idFromUrl) {
@@ -141,7 +148,7 @@ export default function TrackingPortal() {
       setTrackingId(formatted);
       trackShipment(formatted);
     }
-  }, []);
+  }, [initialId]);
 
   const formatDate = (dateStr: string) => {
     if (!dateStr || dateStr === '0') return 'TBD';
@@ -208,11 +215,14 @@ export default function TrackingPortal() {
 
   // Sender & Receiver
   const hasSenderName = !!(shipment?.sender_name && shipment.sender_name !== '0');
-  const hasSenderAddress = !!(shipment?.sender_address && shipment.sender_address !== '0') || !!(shipment?.origin && shipment.origin !== '0');
+  const hasSenderAddress = !!(shipment?.sender_address && shipment.sender_address !== '0') || 
+                           !!(shipment?.origin_city_state && shipment.origin_city_state !== '0') || 
+                           !!(shipment?.origin && shipment.origin !== '0');
   const hasSender = hasSenderName || hasSenderAddress;
 
   const hasReceiverName = !!(shipment?.recipient_name && shipment.recipient_name !== '0');
-  const hasReceiverAddress = !!(shipment?.receiver_address && shipment.receiver_address !== '0') || 
+  const hasReceiverAddress = !!(shipment?.destination_address && shipment.destination_address !== '0') ||
+                             !!(shipment?.receiver_address && shipment.receiver_address !== '0') || 
                              !!(shipment?.recipient_address && shipment.recipient_address !== '0') || 
                              !!(shipment?.destination && shipment.destination !== '0');
   const hasReceiver = hasReceiverName || hasReceiverAddress;
@@ -252,9 +262,9 @@ export default function TrackingPortal() {
   ].filter(Boolean) as { id: string; label: string; icon: any; badgeClass: string }[];
 
   // Geographic locations for map
-  const originLoc = shipment?.sender_address || shipment?.origin || '';
+  const originLoc = shipment?.origin_city_state || shipment?.sender_address || shipment?.origin || '';
   const currentLoc = shipment?.history?.[0]?.location || originLoc;
-  const destinationLoc = shipment?.receiver_address || shipment?.recipient_address || shipment?.destination || '';
+  const destinationLoc = shipment?.destination_address || shipment?.receiver_address || shipment?.recipient_address || shipment?.destination || '';
 
   return (
     <div className="min-h-screen bg-[#F8F9FA] font-sans text-[#141414]">
@@ -397,7 +407,7 @@ export default function TrackingPortal() {
                             )}
                             {hasSenderAddress && (
                               <p className="text-xs text-slate-600 font-medium leading-relaxed">
-                                {shipment.sender_address || shipment.origin}
+                                {shipment.sender_address || shipment.origin_city_state || shipment.origin}
                               </p>
                             )}
                           </div>
@@ -417,7 +427,7 @@ export default function TrackingPortal() {
                             )}
                             {hasReceiverAddress && (
                               <p className="text-xs text-slate-600 font-medium leading-relaxed">
-                                {shipment.receiver_address || shipment.recipient_address || shipment.destination}
+                                {shipment.destination_address || shipment.receiver_address || shipment.recipient_address || shipment.destination}
                               </p>
                             )}
                           </div>
