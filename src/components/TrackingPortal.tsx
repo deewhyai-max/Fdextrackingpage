@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { 
   Search, 
   Clock, 
@@ -6,40 +6,76 @@ import {
   Package, 
   Building2, 
   UserCheck, 
-  MapPin, 
   Calendar, 
   AlertTriangle, 
   Snowflake, 
   FileCheck, 
   Layers, 
-  Scale, 
-  Maximize2, 
   ShieldCheck,
-  CheckCircle2,
-  AlertCircle
+  AlertCircle,
+  Check,
+  PauseCircle,
+  ArrowRight
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { supabase, Shipment, ShipmentStatus } from '@/src/lib/supabase';
+import { supabase, Shipment, ShipmentStatus, TrackingHistory } from '@/src/lib/supabase';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { cn } from '@/lib/utils';
 import TransitMap from './TransitMap';
 
-const MASTER_STAGES: ShipmentStatus[] = [
+// Standard 8-Stage Sequential FedEx Logistics Stages
+export const MASTER_STAGES: ShipmentStatus[] = [
   'Shipping label created',
   'Package received by FedEx',
   'In Transit',
   'On the way',
-  'Out for Delivery',
   'Arriving at destination facility',
-  'On Hold',
+  'At local FedEx facility',
+  'Out for Delivery',
   'Delivered'
 ];
 
-const getStageDisplayLabel = (stage: string) => {
-  return stage;
-};
+/**
+ * Match any status text to one of the 8 canonical FedEx stages
+ */
+export function findStageIndex(statusStr?: string | null): number {
+  if (!statusStr) return -1;
+  const clean = statusStr.toLowerCase().trim();
+
+  for (let i = 0; i < MASTER_STAGES.length; i++) {
+    if (clean === MASTER_STAGES[i].toLowerCase()) return i;
+  }
+
+  // Resilient semantic matching
+  if (clean.includes('label created')) return 0;
+  if (clean.includes('package received') || clean.includes('picked up')) return 1;
+  if (clean === 'in transit') return 2;
+  if (clean === 'on the way') return 3;
+  if (clean.includes('arriving at destination')) return 4;
+  if (clean.includes('local fedex facility') || clean.includes('local facility') || clean.includes('at local')) return 5;
+  if (clean.includes('out for delivery')) return 6;
+  if (clean.includes('delivered')) return 7;
+
+  return -1;
+}
+
+/**
+ * Find milestone from history corresponding to a given canonical stage
+ */
+export function getMilestoneForStage(stage: string, history?: TrackingHistory[] | any[] | null): any | null {
+  if (!history || !Array.isArray(history)) return null;
+  const targetIdx = findStageIndex(stage);
+
+  for (const item of history) {
+    const rawStatus = item.status || item.status_name || '';
+    if (findStageIndex(rawStatus) === targetIdx) {
+      return item;
+    }
+  }
+  return null;
+}
 
 // Currency formatter utility
 const formatCurrency = (val?: number | null, currencyCode = 'USD'): string | null => {
@@ -62,11 +98,16 @@ const formatCurrency = (val?: number | null, currencyCode = 'USD'): string | nul
 };
 
 export default function TrackingPortal({ initialId }: { initialId?: string } = {}) {
-  const [trackingId, setTrackingId] = useState(initialId ? initialId.replace(/\D/g, '').slice(0, 12).match(/.{1,4}/g)?.join(' ') || '' : '');
+  const [trackingId, setTrackingId] = useState(
+    initialId ? initialId.replace(/\D/g, '').slice(0, 12).match(/.{1,4}/g)?.join(' ') || '' : ''
+  );
   const [shipment, setShipment] = useState<Shipment | null>(null);
   const [loading, setLoading] = useState(false);
   const [hasSearched, setHasSearched] = useState(false);
   const [errorStatus, setErrorStatus] = useState<string | null>(null);
+
+  // Real-time clock for automated stage advancement
+  const [clockNow, setClockNow] = useState<Date>(() => new Date());
 
   // Check Supabase Configuration on load
   useEffect(() => {
@@ -74,6 +115,15 @@ export default function TrackingPortal({ initialId }: { initialId?: string } = {
       setErrorStatus("System initialization failed. Please contact support.");
     }
   }, []);
+
+  // Update clock ticker when auto_advance is active
+  useEffect(() => {
+    if (!shipment?.auto_advance || shipment?.is_on_hold) return;
+    const interval = setInterval(() => {
+      setClockNow(new Date());
+    }, 4000); // Check clock every 4 seconds
+    return () => clearInterval(interval);
+  }, [shipment?.auto_advance, shipment?.is_on_hold]);
 
   const formatId = (value: string) => {
     const digits = value.replace(/\D/g, '').slice(0, 12);
@@ -150,15 +200,15 @@ export default function TrackingPortal({ initialId }: { initialId?: string } = {
     }
   }, [initialId]);
 
-  const formatDate = (dateStr: string) => {
+  const formatDate = (dateStr?: string | null) => {
     if (!dateStr || dateStr === '0') return 'TBD';
     
-    let normalized = dateStr.trim();
+    let normalized = String(dateStr).trim();
     if (normalized.includes(' ') && !normalized.includes('T')) {
       normalized = normalized.replace(' ', 'T');
     }
     
-    const date = NewDate(normalized);
+    const date = new Date(normalized.includes('T') || normalized.includes('Z') ? normalized : normalized.replace(/-/g, '/'));
     if (isNaN(date.getTime())) return dateStr;
     
     return date.toLocaleDateString('en-US', {
@@ -172,19 +222,117 @@ export default function TrackingPortal({ initialId }: { initialId?: string } = {
     });
   };
 
-  function NewDate(str: string) {
-    return new Date(str.includes('T') || str.includes('Z') ? str : str.replace(/-/g, '/'));
-  }
+  // Geographic locations for map and fallback
+  const originLoc = shipment?.origin_city_state || shipment?.sender_address || shipment?.origin || 'FedEx Origin Hub';
+  const destinationLoc = shipment?.destination_address || shipment?.receiver_address || shipment?.recipient_address || shipment?.destination || 'Destination Address';
 
-  const getHistoryStatus = (stage: string, history: any[]) => {
-    if (!history || !Array.isArray(history)) return { exists: false };
-    const event = history.find(h => 
-      (h.status?.toLowerCase() === stage.toLowerCase()) || 
-      (h.status_name?.toLowerCase() === stage.toLowerCase())
-    );
-    if (event) return { exists: true, ...event };
-    return { exists: false };
-  };
+  /**
+   * Section 2 & 3: Standard 8-Stage Timeline & Dynamic Stage Calculation
+   * 
+   * Advancement & Active Stage Logic:
+   * - If auto_advance is true, evaluate timestamps in history against current time (new Date()).
+   *   The highest milestone whose timestamp has passed is designated as the Active Stage.
+   * - If auto_advance is false, designate explicit status in shipment.status (or last populated history entry).
+   * 
+   * Dynamic "On Hold" Override Display:
+   * - If is_on_hold === true: Freeze progression immediately. The package stays pinned at its current active milestone.
+   * - Replace current active milestone icon with prominent Orange (#FF6600) "On Hold" badge.
+   * - Display status title as On Hold for that specific step while preserving actual location and timestamp.
+   * - Keep all subsequent unreached milestones strictly in the gray "UPCOMING" state.
+   */
+  const stageComputation = useMemo(() => {
+    if (!shipment) {
+      return {
+        activeStageIndex: 0,
+        activeStageName: MASTER_STAGES[0],
+        isEffectiveOnHold: false,
+        activeMilestone: null,
+        activeLocation: originLoc,
+        activeTimestamp: null as string | null
+      };
+    }
+
+    const isOnHold = Boolean(shipment.is_on_hold || shipment.status === 'On Hold');
+    const history = Array.isArray(shipment.history) ? shipment.history : [];
+
+    let computedIndex = 0;
+
+    if (shipment.auto_advance && !isOnHold) {
+      // Evaluate timestamps in history against clockNow
+      let highestPassed = -1;
+
+      for (const item of history) {
+        const stageIdx = findStageIndex(item.status || (item as any).status_name);
+        if (stageIdx >= 0 && item.timestamp) {
+          let normalized = String(item.timestamp).trim();
+          if (normalized.includes(' ') && !normalized.includes('T')) {
+            normalized = normalized.replace(' ', 'T');
+          }
+          const itemDate = new Date(normalized);
+          if (!isNaN(itemDate.getTime()) && itemDate.getTime() <= clockNow.getTime()) {
+            if (stageIdx > highestPassed) {
+              highestPassed = stageIdx;
+            }
+          }
+        }
+      }
+
+      if (highestPassed >= 0) {
+        computedIndex = highestPassed;
+      } else {
+        const explicitIdx = findStageIndex(shipment.status);
+        computedIndex = explicitIdx >= 0 ? explicitIdx : 0;
+      }
+    } else {
+      // auto_advance is false OR isOnHold is true (progression frozen at current active milestone)
+      let explicitIdx = -1;
+      if (shipment.status && shipment.status !== 'On Hold') {
+        explicitIdx = findStageIndex(shipment.status);
+      }
+
+      if (explicitIdx >= 0) {
+        computedIndex = explicitIdx;
+      } else if (history.length > 0) {
+        let maxHistIdx = -1;
+        for (const item of history) {
+          const idx = findStageIndex(item.status || (item as any).status_name);
+          if (idx > maxHistIdx) {
+            maxHistIdx = idx;
+          }
+        }
+        computedIndex = maxHistIdx >= 0 ? maxHistIdx : 0;
+      } else {
+        computedIndex = 0;
+      }
+    }
+
+    computedIndex = Math.max(0, Math.min(computedIndex, MASTER_STAGES.length - 1));
+    const activeStageName = MASTER_STAGES[computedIndex];
+    const activeMilestone = getMilestoneForStage(activeStageName, history) || history[computedIndex] || null;
+
+    // Preserve actual location and timestamp of active milestone
+    const activeLocation = activeMilestone?.location || 
+      (computedIndex === 0 ? originLoc : (computedIndex === MASTER_STAGES.length - 1 ? destinationLoc : originLoc));
+    const activeTimestamp = activeMilestone?.timestamp || shipment.created_at || null;
+
+    return {
+      activeStageIndex: computedIndex,
+      activeStageName,
+      isEffectiveOnHold: isOnHold,
+      activeMilestone,
+      activeLocation,
+      activeTimestamp
+    };
+  }, [shipment, clockNow, originLoc, destinationLoc]);
+
+  const {
+    activeStageIndex,
+    activeStageName,
+    isEffectiveOnHold,
+    activeMilestone,
+    activeLocation,
+    activeTimestamp
+  } = stageComputation;
 
   // Extract non-zero, populated specs
   const rawWeight = shipment?.weight ? Number(String(shipment.weight).replace(/[^\d.]/g, '')) : 0;
@@ -209,11 +357,11 @@ export default function TrackingPortal({ initialId }: { initialId?: string } = {
 
   // Financial values
   const formattedAssetValue = formatCurrency(shipment?.asset_value, shipment?.currency);
-  const formattedServiceFee = formatCurrency(shipment?.service_fee, shipment?.currency);
   const formattedDeclaredValue = formatCurrency(shipment?.declared_value, shipment?.currency);
-  const hasFinancials = !!(formattedAssetValue || formattedServiceFee || formattedDeclaredValue);
+  const formattedServiceFee = formatCurrency(shipment?.service_fee, shipment?.currency);
+  const hasFinancials = !!(formattedAssetValue || formattedDeclaredValue || formattedServiceFee);
 
-  // Sender & Receiver
+  // Sender & Receiver details
   const hasSenderName = !!(shipment?.sender_name && shipment.sender_name !== '0');
   const hasSenderAddress = !!(shipment?.sender_address && shipment.sender_address !== '0') || 
                            !!(shipment?.origin_city_state && shipment.origin_city_state !== '0') || 
@@ -261,23 +409,27 @@ export default function TrackingPortal({ initialId }: { initialId?: string } = {
     }
   ].filter(Boolean) as { id: string; label: string; icon: any; badgeClass: string }[];
 
-  // Geographic locations for map
-  const originLoc = shipment?.origin_city_state || shipment?.sender_address || shipment?.origin || '';
-  const currentLoc = shipment?.history?.[0]?.location || originLoc;
-  const destinationLoc = shipment?.destination_address || shipment?.receiver_address || shipment?.recipient_address || shipment?.destination || '';
-
   return (
     <div className="min-h-screen bg-[#F8F9FA] font-sans text-[#141414]">
-      {/* Minimalist Sticky Header */}
-      <header className="fixed top-0 left-0 right-0 h-[64px] bg-white border-b border-slate-100 flex items-center justify-center z-50 px-6 shadow-xs">
+      {/* Sticky Header */}
+      <header className="fixed top-0 left-0 right-0 h-[64px] bg-white border-b border-slate-100 flex items-center justify-between z-40 px-6 shadow-xs">
         <div className="flex items-center">
           <span className="text-2xl font-black text-[#4D148C]">Fed</span>
           <span className="text-2xl font-black text-[#FF6600]">Ex</span>
         </div>
+
+        <div className="flex items-center gap-3 text-xs">
+          <span className="hidden sm:inline text-slate-500 font-semibold">
+            Official Logistics Network
+          </span>
+          <span className="bg-[#4D148C]/5 text-[#4D148C] border border-[#4D148C]/15 font-mono font-bold px-2.5 py-1 rounded-md text-[11px]">
+            8-STAGE AUTOMATED ENGINE
+          </span>
+        </div>
       </header>
 
       <main className="pt-[84px] pb-24 px-4 max-w-4xl mx-auto space-y-6">
-        {/* Search Engine */}
+        {/* Search Engine Input */}
         <div className="space-y-4">
           {errorStatus && (
             <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-xl text-sm font-medium flex items-center gap-2">
@@ -296,31 +448,38 @@ export default function TrackingPortal({ initialId }: { initialId?: string } = {
                 spellCheck={false}
                 data-lpignore="true"
                 data-1p-ignore="true"
-                placeholder="XXXX XXXX XXXX"
+                data-form-type="other"
+                placeholder="Enter 12-digit tracking number (e.g. 4829 1039 4857)"
                 value={trackingId}
                 onChange={handleInputChange}
-                className="h-14 text-lg font-mono border-2 border-[#4D148C] rounded-xl focus:ring-0 focus:border-[#4D148C] bg-white px-4"
                 onKeyDown={(e) => e.key === 'Enter' && trackShipment()}
+                className="h-14 pl-12 pr-4 bg-white border-slate-200/80 rounded-xl text-base md:text-lg font-mono font-bold tracking-wider placeholder:text-slate-400 placeholder:font-sans placeholder:font-normal placeholder:tracking-normal shadow-xs focus-visible:ring-[#4D148C] focus-visible:border-[#4D148C]"
               />
+              <Search className="w-5 h-5 text-[#4D148C] absolute left-4 top-1/2 -translate-y-1/2" />
             </div>
             <Button 
+              id="track_btn"
               onClick={() => trackShipment()}
-              disabled={loading}
-              className="bg-[#4D148C] hover:bg-[#3a0f6b] text-white h-14 px-8 rounded-xl font-bold transition-all active:scale-95 cursor-pointer"
+              disabled={loading || trackingId.replace(/\s/g, '').length !== 12}
+              className="h-14 px-6 md:px-8 bg-[#FF6600] hover:bg-[#E05A00] text-white font-bold rounded-xl shadow-xs transition-all flex items-center gap-2 shrink-0 cursor-pointer disabled:opacity-50"
             >
-              {loading ? '...' : 'TRACK'}
+              {loading ? (
+                <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+              ) : (
+                <>
+                  <span>TRACK</span>
+                  <ArrowRight className="w-4 h-4" />
+                </>
+              )}
             </Button>
           </div>
 
-          {/* Security & Non-collection Guarantee Badge */}
-          <div className="bg-white border border-slate-100 rounded-xl p-4 flex items-start gap-3 shadow-xs">
-            <div className="w-5 h-5 rounded-full bg-[#4D148C]/10 flex items-center justify-center text-[#4D148C] flex-shrink-0 mt-0.5">
-              <span className="text-[10px] font-black">✓</span>
-            </div>
+          <div className="bg-white border border-slate-200/80 rounded-xl p-4 flex items-start gap-3 shadow-2xs">
+            <ShieldCheck className="w-5 h-5 text-emerald-600 shrink-0 mt-0.5" />
             <div>
-              <p className="text-xs font-bold text-slate-700">Verified Read-Only Search Portal</p>
+              <p className="text-xs font-bold text-slate-700">Verified Automated Logistics Engine</p>
               <p className="text-[11px] text-slate-500 leading-relaxed mt-0.5">
-                This logistics status portal only accepts 12-digit tracking numbers. We never request passwords, profile logins, credit card information, or physical addresses. All tracking information is completely anonymous and read-only.
+                This portal tracks verified FedEx shipments using our 8-Stage Automated Route Engine with OpenStreetMap telemetry, waypoint routing, and instant milestone synchronization.
               </p>
             </div>
           </div>
@@ -336,22 +495,56 @@ export default function TrackingPortal({ initialId }: { initialId?: string } = {
               transition={{ duration: 0.3 }}
               className="space-y-6"
             >
-              {/* Master Card (Expanded Enterprise Bento Design) */}
+              {/* Master Card */}
               <Card className="border border-slate-200/80 shadow-[0_4px_24px_rgba(0,0,0,0.06)] rounded-2xl overflow-hidden bg-white">
                 <CardContent className="p-6 md:p-8 space-y-6">
+                  {/* Dynamic "On Hold" Master Alert Banner */}
+                  {isEffectiveOnHold && (
+                    <div className="bg-amber-50 border border-amber-300 rounded-xl p-4 flex items-start gap-3 text-amber-900 shadow-2xs">
+                      <AlertTriangle className="w-5 h-5 text-[#FF6600] shrink-0 mt-0.5" />
+                      <div className="space-y-1">
+                        <div className="flex items-center gap-2">
+                          <p className="text-xs font-black uppercase tracking-wider text-[#FF6600]">
+                            Shipment On Hold — Automation Frozen
+                          </p>
+                          <span className="bg-[#FF6600] text-white text-[9px] font-black uppercase px-2 py-0.2 rounded font-mono">
+                            ACTIVE HOLD
+                          </span>
+                        </div>
+                        <p className="text-xs text-slate-700 leading-relaxed">
+                          Package progression is currently frozen at <strong>{activeLocation}</strong>. 
+                          The shipment is pinned at this milestone and all subsequent delivery steps remain paused until released by FedEx dispatch.
+                        </p>
+                      </div>
+                    </div>
+                  )}
+
                   {/* Top Status Header */}
                   <div className="flex flex-wrap items-start justify-between gap-4 border-b border-slate-100 pb-5">
                     <div className="space-y-1">
                       <div className="flex items-center gap-2">
-                        <span className="w-2.5 h-2.5 rounded-full bg-[#FF6600] animate-ping" />
-                        <p className="text-[10px] font-bold text-[#4D148C] uppercase tracking-widest">Shipment Status</p>
+                        <span className={cn(
+                          "w-2.5 h-2.5 rounded-full animate-ping",
+                          isEffectiveOnHold ? "bg-[#FF6600]" : "bg-[#4D148C]"
+                        )} />
+                        <p className="text-[10px] font-bold text-[#4D148C] uppercase tracking-widest">
+                          Shipment Status
+                        </p>
+                        {shipment.auto_advance && !isEffectiveOnHold && (
+                          <span className="text-[9px] font-black uppercase tracking-wider text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full">
+                            AUTO-ADVANCE ACTIVE
+                          </span>
+                        )}
                       </div>
                       <h2 className={cn(
                         "text-2xl md:text-3xl font-black tracking-tight uppercase",
-                        shipment.status === 'On Hold' ? "text-red-500" : "text-slate-900"
+                        isEffectiveOnHold ? "text-[#FF6600]" : "text-slate-900"
                       )}>
-                        {shipment.status}
+                        {isEffectiveOnHold ? 'On Hold' : activeStageName}
                       </h2>
+                      <p className="text-xs text-slate-500 font-medium">
+                        {[activeLocation, activeTimestamp ? formatDate(activeTimestamp) : null].filter(Boolean).join(' • ')}
+                      </p>
                     </div>
 
                     <div className="text-left md:text-right space-y-1">
@@ -367,9 +560,41 @@ export default function TrackingPortal({ initialId }: { initialId?: string } = {
                     </div>
                   </div>
 
-                  {/* Special Handling Badges (Only rendered if flagged true) */}
+                  {/* 8-Stage Visual Segmented Progress Bar */}
+                  <div className="space-y-2 pt-1">
+                    <div className="flex items-center justify-between text-[10px] font-bold uppercase tracking-wider">
+                      <span className="text-slate-500">8-Stage Automated Progression</span>
+                      <span className={cn(
+                        "font-mono px-2 py-0.5 rounded",
+                        isEffectiveOnHold ? "bg-[#FF6600]/10 text-[#FF6600]" : "bg-[#4D148C]/10 text-[#4D148C]"
+                      )}>
+                        STAGE {activeStageIndex + 1} OF 8 {isEffectiveOnHold ? '• ON HOLD' : ''}
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-8 gap-1.5 h-2.5">
+                      {MASTER_STAGES.map((stage, idx) => {
+                        const isDone = idx < activeStageIndex;
+                        const isCurrent = idx === activeStageIndex;
+                        return (
+                          <div
+                            key={stage}
+                            title={`Stage ${idx + 1}: ${stage}`}
+                            className={cn(
+                              "h-full rounded-full transition-all duration-300",
+                              isDone ? "bg-[#4D148C]" :
+                              isCurrent ? (isEffectiveOnHold ? "bg-[#FF6600] animate-pulse ring-2 ring-[#FF6600]/30" : "bg-[#FF6600] ring-2 ring-[#FF6600]/30") :
+                              "bg-slate-200"
+                            )}
+                          />
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Special Handling Badges */}
                   {specialHandlingBadges.length > 0 && (
-                    <div className="space-y-2">
+                    <div className="space-y-2 pt-1">
                       <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Special Handling & Delivery Services</p>
                       <div className="flex flex-wrap gap-2">
                         {specialHandlingBadges.map((badge) => {
@@ -391,7 +616,7 @@ export default function TrackingPortal({ initialId }: { initialId?: string } = {
                     </div>
                   )}
 
-                  {/* Inner Bento Box: Sender & Receiver Grid */}
+                  {/* Sender & Receiver Cards */}
                   {(hasSender || hasReceiver) && (
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       {/* Sender Card */}
@@ -480,7 +705,7 @@ export default function TrackingPortal({ initialId }: { initialId?: string } = {
                     </div>
                   )}
 
-                  {/* Financial & Valuation Summary (Strictly > 0) */}
+                  {/* Financial & Valuation Summary */}
                   {hasFinancials && (
                     <div className="bg-slate-50 border border-slate-200/70 rounded-xl p-4 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
                       {formattedAssetValue && (
@@ -504,7 +729,7 @@ export default function TrackingPortal({ initialId }: { initialId?: string } = {
                     </div>
                   )}
 
-                  {/* Delivery Schedule & History Count Bar */}
+                  {/* Delivery Schedule Bar */}
                   <div className="flex flex-wrap items-center justify-between gap-4 pt-2 border-t border-slate-100">
                     {shipment.estimated_delivery_date && shipment.estimated_delivery_date !== '0' ? (
                       <div className="space-y-1">
@@ -519,82 +744,155 @@ export default function TrackingPortal({ initialId }: { initialId?: string } = {
                     )}
                     <div className="text-right">
                       <p className="text-[10px] font-bold text-[#4D148C] uppercase tracking-widest bg-[#4D148C]/5 px-3 py-1.5 rounded-lg border border-[#4D148C]/10">
-                        {(shipment.history?.length || 0)} of 8 SHIPMENT HISTORY
+                        {activeStageIndex + 1} OF 8 MILESTONES COMPLETED
                       </p>
                     </div>
                   </div>
                 </CardContent>
               </Card>
 
-              {/* Interactive Transit Route Map */}
+              {/* Section 4: OpenStreetMap & Waypoint Route Visualization */}
               <TransitMap
                 origin={originLoc}
-                currentLocation={currentLoc}
+                currentLocation={activeLocation}
                 destination={destinationLoc}
-                currentStatus={shipment.status}
+                currentStatus={isEffectiveOnHold ? 'On Hold' : activeStageName}
+                routeWaypoints={shipment.route_waypoints || []}
+                isOnHold={isEffectiveOnHold}
               />
 
-              {/* Vertical Journey (SHIPMENT HISTORY) */}
+              {/* Section 2 & 3: Standard 8-Stage Timeline */}
               <div className="bg-white p-6 md:p-8 rounded-2xl shadow-[0_4px_24px_rgba(0,0,0,0.06)] border border-slate-200/80 space-y-8">
-                <div className="flex items-center justify-between border-b border-slate-100 pb-4">
-                  <h3 className="text-xs font-black text-slate-400 uppercase tracking-[0.2em]">Shipment History Milestones</h3>
-                  <span className="text-[11px] font-semibold text-[#4D148C]">Standardized FedEx Logistics Network</span>
+                <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-4">
+                  <div>
+                    <h3 className="text-xs font-black text-slate-400 uppercase tracking-[0.2em]">
+                      8-Stage Automated Route Milestones
+                    </h3>
+                    <p className="text-[11px] text-slate-500 mt-0.5">
+                      Standardized FedEx Logistics Network Sequential Timeline
+                    </p>
+                  </div>
+                  {isEffectiveOnHold ? (
+                    <span className="text-[11px] font-bold text-[#FF6600] bg-[#FF6600]/10 px-2.5 py-1 rounded-md border border-[#FF6600]/20 flex items-center gap-1.5">
+                      <PauseCircle className="w-3.5 h-3.5" />
+                      PROGRESSION FROZEN (ON HOLD)
+                    </span>
+                  ) : (
+                    <span className="text-[11px] font-semibold text-[#4D148C]">
+                      Real-time Milestone Progression
+                    </span>
+                  )}
                 </div>
                 
                 <div className="space-y-0 relative">
                   {MASTER_STAGES.map((stage, index) => {
-                    const historyItem = getHistoryStatus(stage, shipment.history);
-                    // Match currentStatus with stage (case-insensitive)
-                    const currentStatus = shipment.status || shipment.history?.[0]?.status || shipment.history?.[0]?.status_name;
-                    const isHead = currentStatus ? currentStatus.trim().toLowerCase() === stage.trim().toLowerCase() : false;
-                    const isPast = historyItem.exists || isHead;
-                    const isUpcoming = !isPast;
+                    const isCompleted = index < activeStageIndex;
+                    const isActive = index === activeStageIndex;
+                    const isUpcoming = index > activeStageIndex;
+
+                    const milestone = getMilestoneForStage(stage, shipment.history);
+                    const milestoneLocation = milestone?.location || 
+                      (index === 0 ? originLoc : (index === MASTER_STAGES.length - 1 ? destinationLoc : activeLocation));
+                    const milestoneTimestamp = milestone?.timestamp ? formatDate(milestone.timestamp).replace(' • ', ', ') : null;
 
                     return (
-                      <div key={stage} className="flex gap-5 min-h-[72px]">
+                      <div key={stage} className="flex gap-5 min-h-[76px]">
+                        {/* Timeline Track & Node */}
                         <div className="flex flex-col items-center">
-                          <div className={cn(
-                            "w-8 h-8 rounded-full flex items-center justify-center z-10 transition-all duration-300",
-                            isHead ? "bg-[#FF6600] scale-110 shadow-md ring-4 ring-[#FF6600]/20" : 
-                            isPast ? "bg-[#4D148C]" : "bg-slate-200"
-                          )}>
-                            {isHead ? (
-                              <Truck className="w-4 h-4 text-white" />
-                            ) : isPast ? (
-                              <div className="w-2.5 h-2.5 rounded-full bg-white" />
-                            ) : null}
-                          </div>
+                          {isCompleted ? (
+                            /* Completed Stage: Solid FedEx Purple Icon */
+                            <div className="w-8 h-8 rounded-full bg-[#4D148C] text-white flex items-center justify-center z-10 shadow-xs">
+                              <Check className="w-4 h-4 stroke-[3]" />
+                            </div>
+                          ) : isActive ? (
+                            /* Active Stage: Prominent Orange On Hold badge OR Highlighted Indicator Badge */
+                            isEffectiveOnHold ? (
+                              <div className="w-9 h-9 rounded-full bg-[#FF6600] text-white flex items-center justify-center z-10 shadow-lg ring-4 ring-[#FF6600]/30 animate-pulse">
+                                <AlertTriangle className="w-4 h-4 stroke-[2.5]" />
+                              </div>
+                            ) : (
+                              <div className="w-9 h-9 rounded-full bg-[#4D148C] text-white flex items-center justify-center z-10 shadow-lg ring-4 ring-[#4D148C]/25">
+                                <Truck className="w-4 h-4" />
+                              </div>
+                            )
+                          ) : (
+                            /* Upcoming Stage: Grayed-out */
+                            <div className="w-8 h-8 rounded-full bg-slate-100 border border-slate-200 text-slate-400 flex items-center justify-center z-10">
+                              <div className="w-2.5 h-2.5 rounded-full bg-slate-300" />
+                            </div>
+                          )}
+
+                          {/* Connecting vertical line */}
                           {index !== MASTER_STAGES.length - 1 && (
                             <div className={cn(
                               "w-0.5 flex-grow my-1 transition-colors duration-300",
-                              (isPast && !isHead) ? "bg-[#4D148C]" : "bg-slate-200"
+                              isCompleted ? "bg-[#4D148C]" : "bg-slate-200"
                             )} />
                           )}
                         </div>
 
+                        {/* Milestone Description Content */}
                         <div className={cn(
                           "pb-8 flex-grow",
                           isUpcoming && "opacity-45"
                         )}>
                           <div className="flex justify-between items-start">
                             <div className="space-y-1">
-                              <p className={cn(
-                                "text-sm leading-tight transition-colors duration-300",
-                                isHead ? (stage === 'On Hold' ? "text-red-500 font-black" : "text-slate-900 font-black") : 
-                                (isPast && stage === 'On Hold') ? "text-red-500 font-bold" :
-                                isPast ? "text-slate-800 font-bold" :
-                                "text-slate-400 font-medium"
-                              )}>
-                                {getStageDisplayLabel(stage)}
-                                {isUpcoming && (
-                                  <span className="ml-2 text-[8px] font-black uppercase tracking-widest text-slate-400 bg-slate-100 px-2 py-0.5 rounded">
-                                    Upcoming
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <p className={cn(
+                                  "text-sm leading-tight transition-colors duration-300",
+                                  isCompleted ? "text-slate-900 font-bold" :
+                                  isActive ? (isEffectiveOnHold ? "text-[#FF6600] font-black text-base" : "text-slate-900 font-black text-base") :
+                                  "text-slate-400 font-medium"
+                                )}>
+                                  {isActive && isEffectiveOnHold ? 'On Hold' : stage}
+                                </p>
+
+                                {/* Badges */}
+                                {isCompleted && (
+                                  <span className="text-[9px] font-bold text-[#4D148C] bg-[#4D148C]/10 px-2 py-0.5 rounded uppercase tracking-wider">
+                                    Completed
                                   </span>
                                 )}
-                              </p>
-                              {isPast && (
-                                <p className="text-[12px] text-slate-500 font-medium">
-                                  {[historyItem.location, historyItem.timestamp ? formatDate(historyItem.timestamp).replace(' • ', ', ') : null].filter(Boolean).join(' | ')}
+                                {isActive && (
+                                  isEffectiveOnHold ? (
+                                    <span className="text-[9px] font-black uppercase tracking-widest text-white bg-[#FF6600] px-2.5 py-0.5 rounded-full shadow-xs">
+                                      ON HOLD
+                                    </span>
+                                  ) : (
+                                    <span className="text-[9px] font-black uppercase tracking-widest text-white bg-[#FF6600] px-2 py-0.5 rounded-full shadow-xs flex items-center gap-1">
+                                      <span className="w-1.5 h-1.5 rounded-full bg-white animate-ping" />
+                                      Active Stage
+                                    </span>
+                                  )
+                                )}
+                                {isUpcoming && (
+                                  <span className="text-[8px] font-bold uppercase tracking-widest text-slate-400 bg-slate-100 border border-slate-200 px-2 py-0.5 rounded">
+                                    UPCOMING
+                                  </span>
+                                )}
+                              </div>
+
+                              {/* Location and Timestamp (preserved on hold and completed) */}
+                              {!isUpcoming ? (
+                                <div className="space-y-0.5">
+                                  <p className="text-[12px] text-slate-600 font-medium">
+                                    {[milestoneLocation, milestoneTimestamp].filter(Boolean).join(' • ')}
+                                  </p>
+                                  {milestone?.details && (
+                                    <p className="text-[11px] text-slate-500 italic">
+                                      {milestone.details}
+                                    </p>
+                                  )}
+                                  {isActive && isEffectiveOnHold && (
+                                    <p className="text-[11px] text-[#FF6600] font-semibold">
+                                      Package movement paused at this facility. Scheduled progression will resume once released.
+                                    </p>
+                                  )}
+                                </div>
+                              ) : (
+                                <p className="text-[11px] text-slate-400 font-normal">
+                                  Pending FedEx logistics route dispatch
                                 </p>
                               )}
                             </div>

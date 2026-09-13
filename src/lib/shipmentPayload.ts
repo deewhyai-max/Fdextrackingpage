@@ -39,6 +39,11 @@ export interface ShipmentFormData {
   is_saturday_delivery?: boolean;
   signature_option?: 'None' | 'Direct' | 'Indirect' | 'Adult' | string;
   is_hold_at_location?: boolean;
+
+  // 6. 8-Stage Automated Route Engine
+  route_waypoints?: any[];
+  auto_advance?: boolean;
+  is_on_hold?: boolean;
 }
 
 export interface ShipmentInsertPayload {
@@ -82,6 +87,11 @@ export interface ShipmentInsertPayload {
   is_saturday_delivery: boolean;
   signature_option: string;
   is_hold_at_location: boolean;
+
+  // 6. 8-Stage Automated Route Engine
+  route_waypoints: any[];
+  auto_advance: boolean;
+  is_on_hold: boolean;
 }
 
 /**
@@ -270,6 +280,11 @@ export function buildShipmentPayload(
     is_hazardous: isHazardous,
     is_saturday_delivery: isSaturdayDelivery,
     signature_option: signatureOption,
-    is_hold_at_location: isHoldAtLocation
+    is_hold_at_location: isHoldAtLocation,
+
+    // 6. 8-Stage Automated Route Engine
+    route_waypoints: Array.isArray(formData.route_waypoints) ? formData.route_waypoints : [],
+    auto_advance: Boolean(formData.auto_advance),
+    is_on_hold: Boolean(formData.is_on_hold)
   };
 }

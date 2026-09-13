@@ -17,7 +17,8 @@ import {
   Snowflake,
   AlertTriangle,
   Calendar,
-  FileCheck
+  FileCheck,
+  Route
 } from 'lucide-react';
 import { supabase } from '@/src/lib/supabase';
 import { 
@@ -66,8 +67,11 @@ export default function ShipmentInitializationEngine({ onShipmentCreated }: Ship
     is_saturday_delivery: false,
     signature_option: 'None',
     is_hold_at_location: false,
+    auto_advance: false,
+    is_on_hold: false,
   });
 
+  const [waypointInput, setWaypointInput] = useState('St. Louis, MO; Indianapolis, IN; Columbus, OH');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [successPayload, setSuccessPayload] = useState<ShipmentInsertPayload | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -117,8 +121,20 @@ export default function ShipmentInitializationEngine({ onShipmentCreated }: Ship
         // Safe fallback if auth session is unavailable
       }
 
+      // Parse intermediate waypoints
+      const parsedWaypoints = waypointInput
+        .split(/[;,]/)
+        .map(w => w.trim())
+        .filter(w => w.length > 0)
+        .map(w => ({ name: w, location: w }));
+
+      const submissionData: ShipmentFormData = {
+        ...formData,
+        route_waypoints: parsedWaypoints
+      };
+
       // Build strictly aligned database payload using our engine builder
-      const payload: ShipmentInsertPayload = buildShipmentPayload(formData, currentUserId);
+      const payload: ShipmentInsertPayload = buildShipmentPayload(submissionData, currentUserId);
 
       // Submit to Supabase shipments table
       const { data, error } = await supabase
@@ -643,6 +659,80 @@ export default function ShipmentInitializationEngine({ onShipmentCreated }: Ship
                 <span>Hold at FedEx OnSite Location</span>
               </label>
             </div>
+          </div>
+        </div>
+
+        {/* Section 6: 8-Stage Automated Route Engine */}
+        <div className="bg-white p-6 rounded-2xl border border-slate-200/80 shadow-xs space-y-4">
+          <div className="flex items-center gap-2 border-b border-slate-100 pb-3">
+            <Route className="w-5 h-5 text-[#FF6600]" />
+            <h2 className="text-sm font-bold uppercase tracking-wider text-slate-900">
+              6. 8-Stage Automated Route Engine & Transit Control
+            </h2>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
+            <div className="space-y-1">
+              <label className="text-xs font-semibold text-slate-700">Initial Stage</label>
+              <select
+                value={formData.status || 'Shipping label created'}
+                onChange={(e) => handleChange('status', e.target.value)}
+                className="w-full h-10 px-3 rounded-lg border border-slate-300 bg-white text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-[#4D148C]"
+              >
+                <option value="Shipping label created">1. Shipping label created</option>
+                <option value="Package received by FedEx">2. Package received by FedEx</option>
+                <option value="In Transit">3. In Transit</option>
+                <option value="On the way">4. On the way</option>
+                <option value="Arriving at destination facility">5. Arriving at destination facility</option>
+                <option value="At local FedEx facility">6. At local FedEx facility</option>
+                <option value="Out for Delivery">7. Out for Delivery</option>
+                <option value="Delivered">8. Delivered</option>
+              </select>
+            </div>
+
+            <div className="space-y-1 sm:col-span-2">
+              <label className="text-xs font-semibold text-slate-700">
+                Intermediate Route Waypoints (Semicolon or comma-separated)
+              </label>
+              <Input
+                placeholder="e.g. Nashville, TN; Louisville, KY; Columbus, OH"
+                value={waypointInput}
+                onChange={(e) => setWaypointInput(e.target.value)}
+                className="border-slate-300 font-medium"
+              />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2 border-t border-slate-100">
+            <label className="flex items-start gap-3 p-3 rounded-xl border border-slate-200 bg-slate-50/50 hover:bg-slate-50 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={Boolean(formData.auto_advance)}
+                onChange={(e) => handleChange('auto_advance', e.target.checked)}
+                className="w-4 h-4 mt-0.5 rounded text-[#4D148C] focus:ring-[#4D148C] cursor-pointer"
+              />
+              <div className="space-y-0.5">
+                <p className="text-xs font-bold text-slate-900">Auto-Advance Route Engine</p>
+                <p className="text-[11px] text-slate-500">
+                  Automatically progresses stages forward based on milestone timeline clock comparison.
+                </p>
+              </div>
+            </label>
+
+            <label className="flex items-start gap-3 p-3 rounded-xl border border-amber-200 bg-amber-50/40 hover:bg-amber-50 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={Boolean(formData.is_on_hold)}
+                onChange={(e) => handleChange('is_on_hold', e.target.checked)}
+                className="w-4 h-4 mt-0.5 rounded text-[#FF6600] focus:ring-[#FF6600] cursor-pointer"
+              />
+              <div className="space-y-0.5">
+                <p className="text-xs font-bold text-amber-900">Master "On Hold" Override</p>
+                <p className="text-[11px] text-amber-800">
+                  Freezes route advancement at the active milestone and renders prominent orange hold badge.
+                </p>
+              </div>
+            </label>
           </div>
         </div>
 

@@ -1,13 +1,17 @@
 import React, { useEffect, useRef, useState } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
-import { MapPin, Navigation, Truck, Package, ShieldCheck, ArrowRight } from 'lucide-react';
+import { Navigation, Truck, Package, ShieldCheck, ArrowRight, AlertTriangle } from 'lucide-react';
+import { RouteWaypoint } from '@/src/lib/supabase';
 
-interface TransitMapProps {
+export interface TransitMapProps {
   origin: string;
   currentLocation?: string;
+  currentCoordinates?: { lat: number; lng: number } | [number, number];
   destination: string;
   currentStatus: string;
+  routeWaypoints?: (string | RouteWaypoint | [number, number])[];
+  isOnHold?: boolean;
 }
 
 interface GeoPoint {
@@ -15,13 +19,15 @@ interface GeoPoint {
   lng: number;
   label: string;
   sublabel?: string;
-  type: 'origin' | 'current' | 'destination';
+  type: 'origin' | 'waypoint' | 'current' | 'destination';
+  index?: number;
 }
 
-// Well-known logistics hub & city coordinate lookups for fast, offline-safe resolution
+// Well-known logistics hub & city coordinate lookups for instant, resilient resolution
 const KNOWN_COORDINATES: Record<string, [number, number]> = {
   'memphis': [35.1495, -90.0490],
   'memphis, tn': [35.1495, -90.0490],
+  'memphis superhub': [35.0425, -89.9767],
   'indianapolis': [39.7684, -86.1581],
   'indianapolis, in': [39.7684, -86.1581],
   'louisville': [38.2527, -85.7585],
@@ -64,6 +70,17 @@ const KNOWN_COORDINATES: Record<string, [number, number]> = {
   'orlando, fl': [28.5383, -81.3792],
   'las vegas': [36.1699, -115.1398],
   'las vegas, nv': [36.1699, -115.1398],
+  'nashville': [36.1627, -86.7816],
+  'nashville, tn': [36.1627, -86.7816],
+  'columbus': [39.9612, -82.9988],
+  'columbus, oh': [39.9612, -82.9988],
+  'cincinnati': [39.1031, -84.5120],
+  'cincinnati, oh': [39.1031, -84.5120],
+  'kansas city': [39.0997, -94.5786],
+  'st. louis': [38.6270, -90.1994],
+  'st louis': [38.6270, -90.1994],
+  'charlotte': [35.2271, -80.8431],
+  'charlotte, nc': [35.2271, -80.8431],
   'london': [51.5074, -0.1278],
   'london, uk': [51.5074, -0.1278],
   'paris': [48.8566, 2.3522],
@@ -80,34 +97,33 @@ const KNOWN_COORDINATES: Record<string, [number, number]> = {
   'sydney, australia': [-33.8688, 151.2093]
 };
 
-// Simple memory cache for geocoded queries
 const GEO_CACHE = new Map<string, [number, number]>();
 
 async function geocodeLocation(query: string, fallbackOffset = 0): Promise<[number, number]> {
   const clean = query.trim().toLowerCase();
   if (!clean) return [39.8283 + fallbackOffset, -98.5795 + fallbackOffset];
 
-  // 1. Check direct lookup in KNOWN_COORDINATES
+  // 1. Direct match
   if (KNOWN_COORDINATES[clean]) {
     return KNOWN_COORDINATES[clean];
   }
 
-  // 2. Check if any known key is contained in the string (e.g. "Collierville, Memphis, TN")
+  // 2. Substring match
   for (const [key, coords] of Object.entries(KNOWN_COORDINATES)) {
     if (clean.includes(key)) {
       return coords;
     }
   }
 
-  // 3. Check memory cache
+  // 3. Cache
   if (GEO_CACHE.has(clean)) {
     return GEO_CACHE.get(clean)!;
   }
 
-  // 4. Query OpenStreetMap Nominatim with safety timeout
+  // 4. OpenStreetMap Nominatim
   try {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 2800);
+    const timer = setTimeout(() => controller.abort(), 2600);
     const resp = await fetch(
       `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&limit=1`,
       {
@@ -129,48 +145,122 @@ async function geocodeLocation(query: string, fallbackOffset = 0): Promise<[numb
     // Network/timeout fallback
   }
 
-  // 5. Deterministic fallback so pins don't overlap completely if unresolved
+  // 5. Deterministic fallback hash
   const hash = clean.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
-  const lat = 37.5 + ((hash % 120) - 60) * 0.08 + fallbackOffset * 0.4;
-  const lng = -96.0 + (((hash * 7) % 200) - 100) * 0.15 + fallbackOffset * 0.6;
+  const lat = 37.5 + ((hash % 120) - 60) * 0.08 + fallbackOffset * 0.35;
+  const lng = -96.0 + (((hash * 7) % 200) - 100) * 0.15 + fallbackOffset * 0.55;
   const fallbackCoords: [number, number] = [lat, lng];
   GEO_CACHE.set(clean, fallbackCoords);
   return fallbackCoords;
 }
 
-export default function TransitMap({ origin, currentLocation, destination, currentStatus }: TransitMapProps) {
+export default function TransitMap({
+  origin,
+  currentLocation,
+  currentCoordinates,
+  destination,
+  currentStatus,
+  routeWaypoints = [],
+  isOnHold = false
+}: TransitMapProps) {
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapInstanceRef = useRef<L.Map | null>(null);
   const [points, setPoints] = useState<GeoPoint[]>([]);
   const [loading, setLoading] = useState(true);
 
-  const effectiveCurrent = currentLocation || origin;
+  const effectiveCurrent = currentLocation || origin || 'In Transit';
 
-  // Resolve points
+  // Geocode and resolve full route: Origin -> route_waypoints -> Current Active Location -> Destination
   useEffect(() => {
     let isCancelled = false;
 
-    async function resolveAll() {
+    async function resolveRoute() {
       setLoading(true);
-      const originCoords = await geocodeLocation(origin || 'Memphis, TN', -0.5);
-      const currentCoords = await geocodeLocation(effectiveCurrent || origin || 'Indianapolis, IN', 0);
-      const destCoords = await geocodeLocation(destination || 'New York, NY', 0.5);
+
+      // 1. Origin
+      const originCoords = await geocodeLocation(origin || 'Memphis, TN', -0.4);
+
+      // 2. Route Waypoints
+      const resolvedWaypoints: GeoPoint[] = [];
+      if (Array.isArray(routeWaypoints) && routeWaypoints.length > 0) {
+        for (let i = 0; i < routeWaypoints.length; i++) {
+          const wp = routeWaypoints[i];
+          let lat = 0;
+          let lng = 0;
+          let label = `Waypoint ${i + 1}`;
+          let sublabel = '';
+
+          if (Array.isArray(wp) && wp.length >= 2 && typeof wp[0] === 'number') {
+            lat = wp[0];
+            lng = wp[1];
+            sublabel = `Lat ${lat.toFixed(2)}, Lng ${lng.toFixed(2)}`;
+          } else if (typeof wp === 'object' && wp !== null) {
+            const typedWp = wp as RouteWaypoint;
+            label = typedWp.name || typedWp.location || `Waypoint ${i + 1}`;
+            sublabel = typedWp.location || typedWp.name || '';
+            if (typeof typedWp.lat === 'number' && typeof typedWp.lng === 'number') {
+              lat = typedWp.lat;
+              lng = typedWp.lng;
+            } else if (Array.isArray(typedWp.coordinates) && typedWp.coordinates.length >= 2) {
+              lat = typedWp.coordinates[0];
+              lng = typedWp.coordinates[1];
+            } else {
+              const coords = await geocodeLocation(typedWp.location || typedWp.name || `Hub ${i + 1}`, (i + 1) * 0.2);
+              lat = coords[0];
+              lng = coords[1];
+            }
+          } else if (typeof wp === 'string') {
+            label = wp;
+            sublabel = wp;
+            const coords = await geocodeLocation(wp, (i + 1) * 0.2);
+            lat = coords[0];
+            lng = coords[1];
+          }
+
+          if (lat && lng) {
+            resolvedWaypoints.push({
+              lat,
+              lng,
+              label,
+              sublabel,
+              type: 'waypoint',
+              index: i + 1
+            });
+          }
+        }
+      }
+
+      // 3. Current Active Location
+      let currentCoords: [number, number];
+      if (currentCoordinates) {
+        if (Array.isArray(currentCoordinates)) {
+          currentCoords = [currentCoordinates[0], currentCoordinates[1]];
+        } else {
+          currentCoords = [currentCoordinates.lat, currentCoordinates.lng];
+        }
+      } else {
+        currentCoords = await geocodeLocation(effectiveCurrent, 0);
+      }
+
+      // 4. Destination
+      const destCoords = await geocodeLocation(destination || 'New York, NY', 0.4);
 
       if (isCancelled) return;
 
-      const newPoints: GeoPoint[] = [
+      const fullRoutePoints: GeoPoint[] = [
         {
           lat: originCoords[0],
           lng: originCoords[1],
           label: 'Shipment Origin',
-          sublabel: origin || 'Logistics Hub',
+          sublabel: origin || 'FedEx Origin Facility',
           type: 'origin'
         },
+        ...resolvedWaypoints,
         {
           lat: currentCoords[0],
           lng: currentCoords[1],
-          label: currentStatus || 'In Transit',
-          sublabel: effectiveCurrent || 'Current Location',
+          label: isOnHold ? 'Shipment On Hold' : (currentStatus || 'In Transit'),
+          sublabel: effectiveCurrent,
           type: 'current'
         },
         {
@@ -182,28 +272,26 @@ export default function TransitMap({ origin, currentLocation, destination, curre
         }
       ];
 
-      setPoints(newPoints);
+      setPoints(fullRoutePoints);
       setLoading(false);
     }
 
-    resolveAll();
+    resolveRoute();
 
     return () => {
       isCancelled = true;
     };
-  }, [origin, effectiveCurrent, destination, currentStatus]);
+  }, [origin, effectiveCurrent, currentCoordinates, destination, currentStatus, routeWaypoints, isOnHold]);
 
-  // Render Leaflet Map
+  // Leaflet Map Rendering
   useEffect(() => {
     if (!mapContainerRef.current || points.length === 0) return;
 
-    // Clean up existing map instance
     if (mapInstanceRef.current) {
       mapInstanceRef.current.remove();
       mapInstanceRef.current = null;
     }
 
-    // Initialize Leaflet Map
     const map = L.map(mapContainerRef.current, {
       zoomControl: true,
       scrollWheelZoom: false,
@@ -211,83 +299,159 @@ export default function TransitMap({ origin, currentLocation, destination, curre
     });
     mapInstanceRef.current = map;
 
-    // OpenStreetMap standard free tile URL without API keys or watermarks
+    // Standard OpenStreetMap free tiles (no API keys, no watermarks)
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
       maxZoom: 19,
       attribution: '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap</a>'
     }).addTo(map);
 
-    const originPoint = points.find(p => p.type === 'origin')!;
-    const currentPoint = points.find(p => p.type === 'current')!;
-    const destPoint = points.find(p => p.type === 'destination')!;
+    const originPoint = points.find(p => p.type === 'origin') || points[0];
+    const waypointPoints = points.filter(p => p.type === 'waypoint');
+    const currentPoint = points.find(p => p.type === 'current') || points[points.length - 2];
+    const destPoint = points.find(p => p.type === 'destination') || points[points.length - 1];
 
-    // 1. Polyline from Origin -> Current (Traveled segment: Solid FedEx Purple)
-    const completedCoords: [number, number][] = [
-      [originPoint.lat, originPoint.lng],
-      [currentPoint.lat, currentPoint.lng]
-    ];
-    L.polyline(completedCoords, {
-      color: '#4D148C',
-      weight: 4,
-      opacity: 0.85,
-      lineCap: 'round',
-      lineJoin: 'round'
-    }).addTo(map);
+    // Combine route coordinates: Origin -> route_waypoints -> Current -> Destination
+    const allCoords: [number, number][] = points.map(p => [p.lat, p.lng]);
 
-    // 2. Polyline from Current -> Destination (Remaining segment: Dashed FedEx Orange)
-    const remainingCoords: [number, number][] = [
-      [currentPoint.lat, currentPoint.lng],
-      [destPoint.lat, destPoint.lng]
-    ];
-    L.polyline(remainingCoords, {
-      color: '#FF6600',
-      weight: 3.5,
-      dashArray: '7, 8',
-      opacity: 0.8,
-      lineCap: 'round',
-      lineJoin: 'round'
-    }).addTo(map);
+    // Split into Traveled vs Remaining for clear FedEx styling
+    const currentIndex = points.findIndex(p => p.type === 'current');
+    const traveledPoints = currentIndex >= 0 ? points.slice(0, currentIndex + 1) : [originPoint, currentPoint];
+    const remainingPoints = currentIndex >= 0 ? points.slice(currentIndex) : [currentPoint, destPoint];
 
-    // Custom Marker Icons
+    // Traveled Segment (Solid FedEx Purple #4D148C)
+    if (traveledPoints.length >= 2) {
+      const traveledCoords: [number, number][] = traveledPoints.map(p => [p.lat, p.lng]);
+      L.polyline(traveledCoords, {
+        color: '#4D148C',
+        weight: 4.5,
+        opacity: 0.9,
+        lineCap: 'round',
+        lineJoin: 'round'
+      }).bindTooltip('Completed Route Segment • FedEx Network', { sticky: true }).addTo(map);
+    }
+
+    // Remaining Segment (Dashed FedEx Orange #FF6600)
+    if (remainingPoints.length >= 2) {
+      const remainingCoords: [number, number][] = remainingPoints.map(p => [p.lat, p.lng]);
+      L.polyline(remainingCoords, {
+        color: '#FF6600',
+        weight: 3.5,
+        dashArray: '7, 8',
+        opacity: 0.85,
+        lineCap: 'round',
+        lineJoin: 'round'
+      }).bindTooltip('Projected Route Path • FedEx Express', { sticky: true }).addTo(map);
+    }
+
+    // Marker Icons
     const createOriginIcon = () => {
       return L.divIcon({
-        className: 'custom-leaflet-pin',
+        className: 'custom-leaflet-origin-pin',
         html: `
           <div style="
             display: flex;
             align-items: center;
             justify-content: center;
-            width: 32px;
-            height: 32px;
+            width: 34px;
+            height: 34px;
             background: #4D148C;
             border: 3px solid #FFFFFF;
             border-radius: 50%;
-            box-shadow: 0 4px 12px rgba(77, 20, 140, 0.4);
+            box-shadow: 0 4px 12px rgba(77, 20, 140, 0.45);
             color: #FFFFFF;
-            font-size: 13px;
           ">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
               <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path>
               <polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline>
               <line x1="12" y1="22.08" x2="12" y2="12"></line>
             </svg>
           </div>
         `,
-        iconSize: [32, 32],
-        iconAnchor: [16, 16],
+        iconSize: [34, 34],
+        iconAnchor: [17, 17],
         popupAnchor: [0, -18]
       });
     };
 
-    const createCurrentIcon = () => {
+    const createWaypointIcon = (idx: number) => {
+      return L.divIcon({
+        className: 'custom-leaflet-waypoint-pin',
+        html: `
+          <div style="
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 28px;
+            height: 28px;
+            background: #FFFFFF;
+            border: 3px solid #4D148C;
+            border-radius: 50%;
+            box-shadow: 0 2px 8px rgba(77, 20, 140, 0.3);
+            color: #4D148C;
+            font-weight: 800;
+            font-size: 11px;
+            font-family: sans-serif;
+          ">
+            ${idx}
+          </div>
+        `,
+        iconSize: [28, 28],
+        iconAnchor: [14, 14],
+        popupAnchor: [0, -16]
+      });
+    };
+
+    const createCurrentIcon = (onHold: boolean) => {
+      if (onHold) {
+        return L.divIcon({
+          className: 'custom-leaflet-pin-onhold',
+          html: `
+            <div style="position: relative; width: 48px; height: 48px; display: flex; align-items: center; justify-content: center;">
+              <div style="
+                position: absolute;
+                width: 48px;
+                height: 48px;
+                border-radius: 50%;
+                background: rgba(255, 102, 0, 0.3);
+                animation: ping 1.4s cubic-bezier(0, 0, 0.2, 1) infinite;
+              "></div>
+              <div style="
+                position: relative;
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                justify-content: center;
+                width: 38px;
+                height: 38px;
+                background: #FF6600;
+                border: 3px solid #FFFFFF;
+                border-radius: 50%;
+                box-shadow: 0 4px 16px rgba(255, 102, 0, 0.6);
+                color: #FFFFFF;
+                z-index: 2;
+              ">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"></path>
+                  <line x1="12" y1="9" x2="12" y2="13"></line>
+                  <line x1="12" y1="17" x2="12.01" y2="17"></line>
+                </svg>
+              </div>
+            </div>
+          `,
+          iconSize: [48, 48],
+          iconAnchor: [24, 24],
+          popupAnchor: [0, -24]
+        });
+      }
+
       return L.divIcon({
         className: 'custom-leaflet-pin-current',
         html: `
-          <div style="position: relative; width: 44px; height: 44px; display: flex; align-items: center; justify-content: center;">
+          <div style="position: relative; width: 46px; height: 46px; display: flex; align-items: center; justify-content: center;">
             <div style="
               position: absolute;
-              width: 44px;
-              height: 44px;
+              width: 46px;
+              height: 46px;
               border-radius: 50%;
               background: rgba(255, 102, 0, 0.25);
               animation: ping 1.8s cubic-bezier(0, 0, 0.2, 1) infinite;
@@ -315,80 +479,116 @@ export default function TransitMap({ origin, currentLocation, destination, curre
             </div>
           </div>
         `,
-        iconSize: [44, 44],
-        iconAnchor: [22, 22],
-        popupAnchor: [0, -22]
+        iconSize: [46, 46],
+        iconAnchor: [23, 23],
+        popupAnchor: [0, -23]
       });
     };
 
     const createDestIcon = () => {
       return L.divIcon({
-        className: 'custom-leaflet-pin',
+        className: 'custom-leaflet-dest-pin',
         html: `
           <div style="
             display: flex;
             align-items: center;
             justify-content: center;
-            width: 32px;
-            height: 32px;
+            width: 34px;
+            height: 34px;
             background: #10B981;
             border: 3px solid #FFFFFF;
             border-radius: 50%;
             box-shadow: 0 4px 12px rgba(16, 185, 129, 0.4);
             color: #FFFFFF;
           ">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
               <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"></path>
               <circle cx="12" cy="10" r="3"></circle>
             </svg>
           </div>
         `,
-        iconSize: [32, 32],
-        iconAnchor: [16, 16],
+        iconSize: [34, 34],
+        iconAnchor: [17, 17],
         popupAnchor: [0, -18]
       });
     };
 
-    // Add Markers with Clean FedEx-Styled Tooltips
+    const markers: L.Marker[] = [];
+
+    // 1. Origin Marker
     const originMarker = L.marker([originPoint.lat, originPoint.lng], { icon: createOriginIcon() })
       .bindPopup(`
-        <div style="font-family: sans-serif; min-width: 160px; padding: 4px;">
-          <div style="font-size: 9px; font-weight: 800; color: #4D148C; text-transform: uppercase; letter-spacing: 0.05em;">Origin</div>
-          <div style="font-size: 13px; font-weight: 700; color: #0F172A; margin-top: 2px;">${originPoint.sublabel}</div>
-        </div>
-      `)
-      .addTo(map);
-
-    const currentMarker = L.marker([currentPoint.lat, currentPoint.lng], { icon: createCurrentIcon(), zIndexOffset: 1000 })
-      .bindPopup(`
         <div style="font-family: sans-serif; min-width: 170px; padding: 4px;">
-          <div style="font-size: 9px; font-weight: 800; color: #FF6600; text-transform: uppercase; letter-spacing: 0.05em;">Live Package Position</div>
-          <div style="font-size: 13px; font-weight: 800; color: #0F172A; margin-top: 2px;">${currentPoint.label}</div>
-          <div style="font-size: 11px; color: #64748B; margin-top: 2px;">${currentPoint.sublabel}</div>
+          <div style="font-size: 9px; font-weight: 800; color: #4D148C; text-transform: uppercase; letter-spacing: 0.08em;">Shipment Origin</div>
+          <div style="font-size: 13px; font-weight: 700; color: #0F172A; margin-top: 2px;">${originPoint.sublabel}</div>
+          <div style="font-size: 10px; color: #64748B; margin-top: 2px;">FedEx Logistics Origin</div>
         </div>
       `)
       .addTo(map);
+    markers.push(originMarker);
 
+    // 2. Waypoint Markers
+    waypointPoints.forEach((wp, idx) => {
+      const wpMarker = L.marker([wp.lat, wp.lng], { icon: createWaypointIcon(wp.index || idx + 1) })
+        .bindPopup(`
+          <div style="font-family: sans-serif; min-width: 160px; padding: 4px;">
+            <div style="font-size: 9px; font-weight: 800; color: #4D148C; text-transform: uppercase; letter-spacing: 0.08em;">
+              Waypoint ${wp.index || idx + 1}
+            </div>
+            <div style="font-size: 13px; font-weight: 700; color: #0F172A; margin-top: 2px;">${wp.label}</div>
+            ${wp.sublabel ? `<div style="font-size: 11px; color: #64748B; margin-top: 2px;">${wp.sublabel}</div>` : ''}
+          </div>
+        `)
+        .addTo(map);
+      markers.push(wpMarker);
+    });
+
+    // 3. Current Active Marker (accurately placed on latest reached location)
+    const currentMarker = L.marker([currentPoint.lat, currentPoint.lng], {
+      icon: createCurrentIcon(isOnHold),
+      zIndexOffset: 1500
+    })
+      .bindPopup(`
+        <div style="font-family: sans-serif; min-width: 190px; padding: 5px;">
+          <div style="display: flex; align-items: center; justify-content: space-between; gap: 4px;">
+            <span style="font-size: 9px; font-weight: 800; color: #FF6600; text-transform: uppercase; letter-spacing: 0.08em;">
+              ${isOnHold ? 'Shipment On Hold' : 'Active Package Position'}
+            </span>
+            ${isOnHold ? '<span style="background: #FF6600; color: #FFF; font-size: 8px; font-weight: 800; padding: 1px 4px; border-radius: 4px;">ON HOLD</span>' : ''}
+          </div>
+          <div style="font-size: 13px; font-weight: 800; color: #0F172A; margin-top: 3px;">
+            ${isOnHold ? 'On Hold' : currentPoint.label}
+          </div>
+          <div style="font-size: 11px; color: #64748B; margin-top: 2px; font-weight: 500;">
+            ${currentPoint.sublabel}
+          </div>
+          ${isOnHold ? '<div style="font-size: 10px; color: #DC2626; margin-top: 4px; font-weight: 600;">Package movement paused at facility</div>' : ''}
+        </div>
+      `)
+      .addTo(map);
+    markers.push(currentMarker);
+
+    // 4. Destination Marker
     const destMarker = L.marker([destPoint.lat, destPoint.lng], { icon: createDestIcon() })
       .bindPopup(`
-        <div style="font-family: sans-serif; min-width: 160px; padding: 4px;">
-          <div style="font-size: 9px; font-weight: 800; color: #10B981; text-transform: uppercase; letter-spacing: 0.05em;">Destination</div>
+        <div style="font-family: sans-serif; min-width: 170px; padding: 4px;">
+          <div style="font-size: 9px; font-weight: 800; color: #10B981; text-transform: uppercase; letter-spacing: 0.08em;">Final Destination</div>
           <div style="font-size: 13px; font-weight: 700; color: #0F172A; margin-top: 2px;">${destPoint.sublabel}</div>
         </div>
       `)
       .addTo(map);
+    markers.push(destMarker);
 
-    // Auto-open current location popup
+    // Auto-open current active marker popup
     currentMarker.openPopup();
 
-    // Fit Bounds with padding
-    const group = L.featureGroup([originMarker, currentMarker, destMarker]);
+    // Fit Bounds cleanly
+    const group = L.featureGroup(markers);
     map.fitBounds(group.getBounds(), {
       padding: [45, 45],
       maxZoom: 10
     });
 
-    // Invalidate size on resize
     const resizeObserver = new ResizeObserver(() => {
       map.invalidateSize();
     });
@@ -403,34 +603,59 @@ export default function TransitMap({ origin, currentLocation, destination, curre
         mapInstanceRef.current = null;
       }
     };
-  }, [points]);
+  }, [points, isOnHold]);
 
   return (
     <div className="bg-white rounded-2xl p-6 md:p-8 shadow-[0_4px_24px_rgba(0,0,0,0.06)] border border-slate-200/80 space-y-5 overflow-hidden">
-      {/* Header bar with FedEx route summary */}
+      {/* Route Header */}
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-4">
         <div className="flex items-center gap-3">
           <div className="w-9 h-9 rounded-xl bg-[#4D148C]/10 flex items-center justify-center text-[#4D148C] flex-shrink-0">
             <Navigation className="w-4 h-4" />
           </div>
           <div>
-            <p className="text-[10px] font-bold text-[#4D148C] uppercase tracking-wider">Live Transit Route</p>
-            <h4 className="text-sm md:text-base font-bold text-slate-900 flex flex-wrap items-center gap-1.5">
+            <div className="flex items-center gap-2">
+              <p className="text-[10px] font-bold text-[#4D148C] uppercase tracking-wider">
+                Automated Route Engine
+              </p>
+              {isOnHold && (
+                <span className="bg-[#FF6600] text-white text-[9px] font-black uppercase px-2 py-0.2 rounded font-mono">
+                  HOLD ACTIVE
+                </span>
+              )}
+            </div>
+            <h4 className="text-sm md:text-base font-bold text-slate-900 flex flex-wrap items-center gap-1.5 mt-0.5">
               <span>{origin || 'Origin'}</span>
+              {routeWaypoints.length > 0 && (
+                <>
+                  <ArrowRight className="w-3.5 h-3.5 text-slate-400" />
+                  <span className="text-slate-600 font-semibold text-xs bg-slate-100 px-2 py-0.5 rounded">
+                    {routeWaypoints.length} Waypoint{routeWaypoints.length > 1 ? 's' : ''}
+                  </span>
+                </>
+              )}
               <ArrowRight className="w-3.5 h-3.5 text-slate-400" />
-              <span className="text-[#FF6600] font-extrabold">{effectiveCurrent || 'Transit'}</span>
+              <span className={isOnHold ? "text-[#FF6600] font-black" : "text-[#FF6600] font-extrabold"}>
+                {effectiveCurrent}
+              </span>
               <ArrowRight className="w-3.5 h-3.5 text-slate-400" />
               <span>{destination || 'Destination'}</span>
             </h4>
           </div>
         </div>
 
-        <div className="flex items-center gap-3 text-xs font-semibold bg-slate-50 px-3 py-1.5 rounded-xl border border-slate-100">
+        <div className="flex flex-wrap items-center gap-2.5 text-xs font-semibold bg-slate-50 px-3 py-1.5 rounded-xl border border-slate-100">
           <span className="flex items-center gap-1.5 text-slate-600">
             <span className="w-2.5 h-2.5 rounded-full bg-[#4D148C]" /> Origin
           </span>
-          <span className="flex items-center gap-1.5 text-[#FF6600]">
-            <span className="w-2.5 h-2.5 rounded-full bg-[#FF6600] animate-pulse" /> Current
+          {routeWaypoints.length > 0 && (
+            <span className="flex items-center gap-1.5 text-[#4D148C]">
+              <span className="w-2.5 h-2.5 rounded-full border-2 border-[#4D148C] bg-white" /> Waypoints
+            </span>
+          )}
+          <span className={`flex items-center gap-1.5 ${isOnHold ? 'text-[#FF6600] font-black' : 'text-[#FF6600]'}`}>
+            <span className={`w-2.5 h-2.5 rounded-full bg-[#FF6600] ${isOnHold ? 'animate-ping' : 'animate-pulse'}`} />
+            {isOnHold ? 'On Hold' : 'Current'}
           </span>
           <span className="flex items-center gap-1.5 text-emerald-600">
             <span className="w-2.5 h-2.5 rounded-full bg-emerald-500" /> Destination
@@ -438,27 +663,27 @@ export default function TransitMap({ origin, currentLocation, destination, curre
         </div>
       </div>
 
-      {/* Map Container */}
-      <div className="relative w-full h-[280px] md:h-[360px] rounded-xl overflow-hidden border border-slate-200/90 bg-slate-100">
+      {/* Map Stage Container */}
+      <div className="relative w-full h-[280px] md:h-[370px] rounded-xl overflow-hidden border border-slate-200/90 bg-slate-100">
         {loading && (
-          <div className="absolute inset-0 bg-white/80 backdrop-blur-xs flex items-center justify-center z-10">
+          <div className="absolute inset-0 bg-white/85 backdrop-blur-xs flex items-center justify-center z-10">
             <div className="flex items-center gap-2 text-xs font-bold text-[#4D148C]">
               <Truck className="w-4 h-4 animate-bounce text-[#FF6600]" />
-              <span>Plotting live logistics telemetry...</span>
+              <span>Plotting automated route engine waypoints...</span>
             </div>
           </div>
         )}
         <div ref={mapContainerRef} className="w-full h-full" style={{ zIndex: 1 }} />
       </div>
 
-      {/* Footer hint */}
+      {/* Telemetry Footer */}
       <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-500 pt-1">
         <span className="flex items-center gap-1.5">
           <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
-          <span>Real-time GPS telemetry routed via FedEx logistics network</span>
+          <span>Automated route telemetry verified via OpenStreetMap Network</span>
         </span>
-        <span className="text-[10px] text-[#4D148C] font-mono font-bold uppercase tracking-wider bg-[#4D148C]/5 px-2 py-0.5 rounded border border-[#4D148C]/10">
-          LIVE TELEMETRY
+        <span className="text-[10px] text-[#4D148C] font-mono font-bold uppercase tracking-wider bg-[#4D148C]/5 px-2.5 py-0.5 rounded border border-[#4D148C]/10">
+          WAYPOINT ENGINE ACTIVE
         </span>
       </div>
     </div>
