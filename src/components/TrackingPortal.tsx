@@ -321,183 +321,133 @@ export default function TrackingPortal({ initialId }: { initialId?: string } = {
   const originLoc = shipment?.origin_city_state || shipment?.sender_address || shipment?.origin || 'FedEx Origin Hub';
   const destinationLoc = shipment?.destination_address || shipment?.receiver_address || shipment?.recipient_address || shipment?.destination || 'Destination Address';
 
-  // Stage calculation
-  const stageComputation = useMemo(() => {
+  // Array Deduplication, Sequential Order (1 to 8), Single Active Hold Node, and Strict Completed vs. Upcoming
+  const processedStagesData = useMemo(() => {
     if (!shipment) {
       return {
         activeStageIndex: 0,
         activeStageName: MASTER_STAGES[0],
         isEffectiveOnHold: false,
         activeLocation: originLoc,
-        activeTimestamp: null as string | null
+        activeTimestamp: null as string | null,
+        stages: []
       };
     }
 
-    const isOnHold = Boolean(shipment.is_on_hold || shipment.status === 'On Hold');
-    const nowTime = clockNow.getTime();
+    const isShipmentOnHold = Boolean(
+      shipment.is_on_hold ||
+      (typeof shipment.status === 'string' && shipment.status.toLowerCase() === 'on hold')
+    );
+
     const rawHistory = Array.isArray(shipment.history) ? [...shipment.history] : [];
 
-    if (rawHistory.length > 0) {
-      // Sort chronologically ascending
-      rawHistory.sort((a, b) => {
-        const tA = parseTimestamp(a.timestamp)?.getTime() ?? 0;
-        const tB = parseTimestamp(b.timestamp)?.getTime() ?? 0;
-        return tA - tB;
-      });
-
-      // Find highest milestone whose timestamp has passed (stageDate <= now)
-      let activeIdx = 0;
-      for (let i = 0; i < rawHistory.length; i++) {
-        const itemDate = parseTimestamp(rawHistory[i].timestamp);
-        if (itemDate && itemDate.getTime() <= nowTime) {
-          activeIdx = i;
-        }
+    // 1. Separate standalone hold entries from standard stages
+    const holdEntries: any[] = [];
+    const standardEntries: any[] = [];
+    rawHistory.forEach(item => {
+      const rawName = (item.status || (item as any).status_name || '').trim();
+      if (rawName.toLowerCase() === 'on hold') {
+        holdEntries.push(item);
+      } else {
+        standardEntries.push(item);
       }
+    });
 
-      const activeItem = rawHistory[activeIdx];
-      const rawName = (activeItem?.status || (activeItem as any)?.status_name || shipment.status || 'In Transit').trim();
-      const effectiveOnHold = isOnHold || rawName.toLowerCase() === 'on hold';
+    const effectiveOnHold = isShipmentOnHold || holdEntries.length > 0;
 
-      return {
-        activeStageIndex: activeIdx,
-        activeStageName: effectiveOnHold ? 'On Hold' : rawName,
-        isEffectiveOnHold: effectiveOnHold,
-        activeLocation: activeItem?.location || originLoc,
-        activeTimestamp: activeItem?.timestamp || null
-      };
-    }
-
-    // Fallback if no history array
-    const explicitIdx = findStageIndex(shipment.status);
-    const validIdx = explicitIdx >= 0 ? explicitIdx : 0;
-    return {
-      activeStageIndex: validIdx,
-      activeStageName: isOnHold ? 'On Hold' : (MASTER_STAGES[validIdx] || 'In Transit'),
-      isEffectiveOnHold: isOnHold,
-      activeLocation: originLoc,
-      activeTimestamp: null
-    };
-  }, [shipment, clockNow, originLoc]);
-
-  const { activeStageIndex, activeStageName, isEffectiveOnHold, activeLocation } = stageComputation;
-
-  // Chronological history with strict Node UI States (COMPLETED, ACTIVE, UPCOMING) based on live time comparison
-  const chronologicalHistory = useMemo(() => {
-    if (!shipment) return [];
-
-    const nowTime = clockNow.getTime();
-    const isOnHold = isEffectiveOnHold;
-    const rawHistory = Array.isArray(shipment.history) ? [...shipment.history] : [];
-
-    if (rawHistory.length > 0) {
-      // Sort chronologically ascending (earliest milestone first, latest last)
-      rawHistory.sort((a, b) => {
-        const tA = parseTimestamp(a.timestamp)?.getTime() ?? 0;
-        const tB = parseTimestamp(b.timestamp)?.getTime() ?? 0;
-        return tA - tB;
-      });
-
-      // Live Time Comparison: find highest milestone whose timestamp has passed (stageDate <= now)
-      let activeIdx = 0;
-      for (let i = 0; i < rawHistory.length; i++) {
-        const itemDate = parseTimestamp(rawHistory[i].timestamp);
-        if (itemDate && itemDate.getTime() <= nowTime) {
-          activeIdx = i;
-        }
-      }
-
-      const rawHistoryResult = rawHistory.map((item, idx) => {
-        const itemDate = parseTimestamp(item.timestamp);
-        const rawStatus = (item.status || (item as any).status_name || '').trim();
-
-        // Determine node state:
-        // COMPLETED: Stage timestamp is in the past (stageDate <= new Date() and before active)
-        // ACTIVE: The highest milestone whose timestamp has passed
-        // UPCOMING: Stage timestamp is strictly in the future (stageDate > new Date())
-        let nodeState: 'COMPLETED' | 'ACTIVE' | 'UPCOMING';
-        if (idx < activeIdx) {
-          nodeState = 'COMPLETED';
-        } else if (idx === activeIdx) {
-          nodeState = 'ACTIVE';
+    // 2. Array Deduplication: filter out duplicate status nodes (keep only the latest entry per unique stage index)
+    const stageMap = new Map<number, any>();
+    standardEntries.forEach(item => {
+      const rawName = (item.status || (item as any).status_name || '').trim();
+      const stageIdx = findStageIndex(rawName);
+      if (stageIdx >= 0 && stageIdx < MASTER_STAGES.length) {
+        const existing = stageMap.get(stageIdx);
+        if (!existing) {
+          stageMap.set(stageIdx, item);
         } else {
-          nodeState = 'UPCOMING';
-        }
-
-        // On Hold Rule: If shipment.is_on_hold === true, replace ONLY the active stage icon with the active Orange (#FF6600) Hold badge
-        const isHoldNode = (nodeState === 'ACTIVE' && isOnHold) || (rawStatus.toLowerCase() === 'on hold' && nodeState !== 'UPCOMING');
-
-        return {
-          id: `hist-${idx}`,
-          title: isHoldNode ? 'On Hold' : rawStatus,
-          originalTitle: rawStatus,
-          location: item.location || activeLocation || originLoc,
-          timestamp: item.timestamp,
-          dateFormatted: formatMilestoneDate(item.timestamp),
-          nodeState,
-          isHold: isHoldNode,
-          isActive: nodeState === 'ACTIVE',
-          isCompleted: nodeState === 'COMPLETED',
-          isUpcoming: nodeState === 'UPCOMING'
-        };
-      });
-
-      // If rawHistory doesn't include the full standard FedEx pipeline (e.g. only 1 stage filled),
-      // append the remaining upcoming MASTER_STAGES so the complete journey is clear
-      const existingStatusNames = new Set(
-        rawHistory.map(h => ((h.status || (h as any).status_name || '').trim().toLowerCase()))
-      );
-
-      let highestMasterIdx = 0;
-      rawHistory.forEach(h => {
-        const name = (h.status || (h as any).status_name || '').trim();
-        const mIdx = findStageIndex(name);
-        if (mIdx > highestMasterIdx) highestMasterIdx = mIdx;
-      });
-
-      const upcomingRemainingStages = [];
-      for (let m = highestMasterIdx + 1; m < MASTER_STAGES.length; m++) {
-        const stageName = MASTER_STAGES[m];
-        if (!existingStatusNames.has(stageName.toLowerCase())) {
-          upcomingRemainingStages.push({
-            id: `upcoming-stage-${m}`,
-            title: stageName,
-            originalTitle: stageName,
-            location: destinationLoc,
-            timestamp: null,
-            dateFormatted: 'Upcoming',
-            nodeState: 'UPCOMING' as const,
-            isHold: false,
-            isActive: false,
-            isCompleted: false,
-            isUpcoming: true
-          });
+          // Keep only the latest entry per unique stage title
+          const tNew = parseTimestamp(item.timestamp)?.getTime() ?? 0;
+          const tOld = parseTimestamp(existing.timestamp)?.getTime() ?? 0;
+          if (tNew >= tOld) {
+            stageMap.set(stageIdx, item);
+          }
         }
       }
+    });
 
-      return [...rawHistoryResult, ...upcomingRemainingStages];
+    // If shipment has an explicit standard status and no history entry exists for it, add it
+    const explicitIdx = findStageIndex(shipment.status);
+    if (explicitIdx >= 0 && !stageMap.has(explicitIdx)) {
+      stageMap.set(explicitIdx, {
+        status_name: MASTER_STAGES[explicitIdx],
+        location: originLoc,
+        timestamp: null
+      });
     }
 
-    // Fallback if no history array in database: construct from MASTER_STAGES
-    const targetIdx = Math.max(0, findStageIndex(shipment.status));
-    return MASTER_STAGES.map((stage, idx) => {
+    // 3. Strict Completed vs. Upcoming Rendering:
+    // Check timestamps sequentially: Once a stage's timestamp is in the future relative to new Date(),
+    // ALL SUBSEQUENT STAGES must automatically render as gray "UPCOMING" nodes.
+    const nowTime = clockNow.getTime();
+    let activeIdx = 0;
+    let encounteredUpcoming = false;
+
+    for (let i = 0; i < MASTER_STAGES.length; i++) {
+      const entry = stageMap.get(i);
+      if (entry && entry.timestamp) {
+        const entryDate = parseTimestamp(entry.timestamp);
+        if (entryDate && entryDate.getTime() <= nowTime) {
+          if (!encounteredUpcoming) {
+            activeIdx = i;
+          }
+        } else {
+          // Timestamp is in the future
+          encounteredUpcoming = true;
+        }
+      } else {
+        // If an intermediate milestone has no recorded past timestamp,
+        // it and all subsequent stages become upcoming
+        if (i > 0) {
+          encounteredUpcoming = true;
+        }
+      }
+    }
+
+    // If hold entries exist, use the latest hold entry's location/timestamp for the active hold badge
+    const latestHoldEntry = holdEntries[holdEntries.length - 1];
+
+    // 4. Build the 8 stages strictly in defined sequential order (1 to 8)
+    const stages = MASTER_STAGES.map((stageName, idx) => {
+      const entry = stageMap.get(idx);
       let nodeState: 'COMPLETED' | 'ACTIVE' | 'UPCOMING';
-      if (idx < targetIdx) {
+      if (idx < activeIdx) {
         nodeState = 'COMPLETED';
-      } else if (idx === targetIdx) {
+      } else if (idx === activeIdx) {
         nodeState = 'ACTIVE';
       } else {
         nodeState = 'UPCOMING';
       }
 
-      const isHoldNode = nodeState === 'ACTIVE' && isOnHold;
+      // Single Active Hold Node: If shipment.is_on_hold === true, display ONLY ONE single active "On Hold"
+      // badge at the exact stage where the package was paused. Do NOT render multiple "On Hold" steps.
+      const isHoldNode = (nodeState === 'ACTIVE' && effectiveOnHold);
+
+      const location = isHoldNode && latestHoldEntry?.location
+        ? latestHoldEntry.location
+        : (entry?.location || (idx === 7 ? destinationLoc : (idx === 0 ? originLoc : (shipment.origin_city_state || 'FedEx Facility'))));
+
+      const timestamp = isHoldNode && latestHoldEntry?.timestamp
+        ? latestHoldEntry.timestamp
+        : (entry?.timestamp || null);
 
       return {
         id: `stage-${idx}`,
-        title: isHoldNode ? 'On Hold' : stage,
-        originalTitle: stage,
-        location: idx === 0 ? originLoc : destinationLoc,
-        timestamp: null,
-        dateFormatted: nodeState === 'UPCOMING' ? 'Upcoming' : 'Completed',
+        step: idx + 1,
+        title: isHoldNode ? 'On Hold' : stageName,
+        originalTitle: stageName,
+        location,
+        timestamp,
+        dateFormatted: formatMilestoneDate(timestamp),
         nodeState,
         isHold: isHoldNode,
         isActive: nodeState === 'ACTIVE',
@@ -505,7 +455,21 @@ export default function TrackingPortal({ initialId }: { initialId?: string } = {
         isUpcoming: nodeState === 'UPCOMING'
       };
     });
-  }, [shipment, isEffectiveOnHold, clockNow, originLoc, destinationLoc, activeLocation]);
+
+    const activeStageItem = stages[activeIdx];
+
+    return {
+      activeStageIndex: activeIdx,
+      activeStageName: effectiveOnHold ? 'On Hold' : MASTER_STAGES[activeIdx],
+      isEffectiveOnHold: effectiveOnHold,
+      activeLocation: activeStageItem?.location || originLoc,
+      activeTimestamp: activeStageItem?.timestamp || null,
+      stages
+    };
+  }, [shipment, clockNow, originLoc, destinationLoc]);
+
+  const { activeStageIndex, activeStageName, isEffectiveOnHold, activeLocation } = processedStagesData;
+  const chronologicalHistory = processedStagesData.stages;
 
   return (
     <div className="min-h-screen bg-white font-sans text-[#141414]">
@@ -688,10 +652,10 @@ export default function TrackingPortal({ initialId }: { initialId?: string } = {
             </div>
 
             {/* Financial Details: Total Shipment Value & Service Fee */}
-            {((shipment.asset_value || shipment.declared_value) || (shipment.service_fee !== undefined && shipment.service_fee !== null)) && (
+            {((shipment.asset_value || shipment.declared_value) || (shipment.service_fee !== null && shipment.service_fee !== undefined)) && (
               <div className={cn(
                 "grid gap-4",
-                ((shipment.asset_value || shipment.declared_value) && (shipment.service_fee !== undefined && shipment.service_fee !== null))
+                ((shipment.asset_value || shipment.declared_value) && (shipment.service_fee !== null && shipment.service_fee !== undefined))
                   ? "grid-cols-1 sm:grid-cols-2"
                   : "grid-cols-1"
               )}>
@@ -713,8 +677,8 @@ export default function TrackingPortal({ initialId }: { initialId?: string } = {
                   </div>
                 ) : null}
 
-                {/* Service Fee Card */}
-                {(shipment.service_fee !== undefined && shipment.service_fee !== null) ? (
+                {/* Service Fee Card - STRICT: If service fee is null or undefined, don't show it at all */}
+                {(shipment.service_fee !== null && shipment.service_fee !== undefined) ? (
                   <div className="bg-[#FBFBFC] border border-slate-200/75 rounded-2xl p-5 space-y-1 shadow-2xs">
                     <div className="flex items-center justify-between">
                       <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
@@ -750,12 +714,14 @@ export default function TrackingPortal({ initialId }: { initialId?: string } = {
               </div>
             )}
 
-            {/* Interactive Route Map */}
+            {/* Interactive Route Map (Automated Route Engine Box under Estimated Delivery Date) */}
             <div className="pt-2">
               <TransitMap
                 origin={originLoc}
                 currentLocation={activeLocation}
                 destination={destinationLoc}
+                recipientName={shipment.recipient_name}
+                destinationAddress={shipment.destination_address}
                 currentStatus={isEffectiveOnHold ? 'On Hold' : activeStageName}
                 routeWaypoints={shipment.route_waypoints || []}
                 isOnHold={isEffectiveOnHold}

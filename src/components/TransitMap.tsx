@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
-import { Navigation, Truck, Package, ShieldCheck, ArrowRight, AlertTriangle } from 'lucide-react';
+import { Navigation, Truck, Package, ShieldCheck, ArrowRight, AlertTriangle, MapPin, CheckCircle2, User } from 'lucide-react';
 import { RouteWaypoint } from '@/src/lib/supabase';
 
 export interface TransitMapProps {
@@ -9,6 +9,8 @@ export interface TransitMapProps {
   currentLocation?: string;
   currentCoordinates?: { lat: number; lng: number } | [number, number];
   destination: string;
+  recipientName?: string;
+  destinationAddress?: string;
   currentStatus: string;
   routeWaypoints?: (string | RouteWaypoint | [number, number])[];
   isOnHold?: boolean;
@@ -159,6 +161,8 @@ export default function TransitMap({
   currentLocation,
   currentCoordinates,
   destination,
+  recipientName,
+  destinationAddress,
   currentStatus,
   routeWaypoints = [],
   isOnHold = false
@@ -168,7 +172,8 @@ export default function TransitMap({
   const [points, setPoints] = useState<GeoPoint[]>([]);
   const [loading, setLoading] = useState(true);
 
-  const effectiveCurrent = currentLocation || origin || 'In Transit';
+  const effectiveCurrent = currentLocation || 'In Transit';
+  const effectiveDestination = destinationAddress || destination || 'Destination Address';
 
   // Geocode and resolve full route: Origin -> route_waypoints -> Current Active Location -> Destination
   useEffect(() => {
@@ -571,9 +576,11 @@ export default function TransitMap({
     // 4. Destination Marker
     const destMarker = L.marker([destPoint.lat, destPoint.lng], { icon: createDestIcon() })
       .bindPopup(`
-        <div style="font-family: sans-serif; min-width: 170px; padding: 4px;">
+        <div style="font-family: sans-serif; min-width: 180px; padding: 4px;">
           <div style="font-size: 9px; font-weight: 800; color: #10B981; text-transform: uppercase; letter-spacing: 0.08em;">Final Destination</div>
-          <div style="font-size: 13px; font-weight: 700; color: #0F172A; margin-top: 2px;">${destPoint.sublabel}</div>
+          ${recipientName ? `<div style="font-size: 13px; font-weight: 800; color: #0F172A; margin-top: 2px;">${recipientName}</div>` : ''}
+          <div style="font-size: 11px; font-weight: 600; color: #475569; margin-top: 2px;">${destPoint.sublabel}</div>
+          <div style="font-size: 9px; color: #10B981; font-weight: 700; margin-top: 3px; text-transform: uppercase;">Delivery Address</div>
         </div>
       `)
       .addTo(map);
@@ -603,62 +610,62 @@ export default function TransitMap({
         mapInstanceRef.current = null;
       }
     };
-  }, [points, isOnHold]);
+  }, [points, isOnHold, recipientName]);
 
   return (
     <div className="bg-white rounded-2xl p-6 md:p-8 shadow-[0_4px_24px_rgba(0,0,0,0.06)] border border-slate-200/80 space-y-5 overflow-hidden">
-      {/* Route Header */}
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-4">
-        <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-xl bg-[#4D148C]/10 flex items-center justify-center text-[#4D148C] flex-shrink-0">
-            <Navigation className="w-4 h-4" />
+      {/* Route Header: Display receiver name and destination location where it is going (NOT the sender) */}
+      <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-100 pb-4">
+        <div className="flex items-start gap-3">
+          <div className="w-10 h-10 rounded-xl bg-[#4D148C]/10 flex items-center justify-center text-[#4D148C] flex-shrink-0 mt-0.5">
+            <Navigation className="w-5 h-5" />
           </div>
-          <div>
-            <div className="flex items-center gap-2">
+          <div className="space-y-1">
+            <div className="flex items-center gap-2 flex-wrap">
               <p className="text-[10px] font-bold text-[#4D148C] uppercase tracking-wider">
                 Automated Route Engine
               </p>
+              <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200/80 px-2 py-0.5 rounded uppercase tracking-wider">
+                Destination Transit
+              </span>
               {isOnHold && (
-                <span className="bg-[#FF6600] text-white text-[9px] font-black uppercase px-2 py-0.2 rounded font-mono">
+                <span className="bg-[#FF6600] text-white text-[9px] font-black uppercase px-2 py-0.5 rounded font-mono">
                   HOLD ACTIVE
                 </span>
               )}
             </div>
-            <h4 className="text-sm md:text-base font-bold text-slate-900 flex flex-wrap items-center gap-1.5 mt-0.5">
-              <span>{origin || 'Origin'}</span>
-              {routeWaypoints.length > 0 && (
-                <>
-                  <ArrowRight className="w-3.5 h-3.5 text-slate-400" />
-                  <span className="text-slate-600 font-semibold text-xs bg-slate-100 px-2 py-0.5 rounded">
-                    {routeWaypoints.length} Waypoint{routeWaypoints.length > 1 ? 's' : ''}
-                  </span>
-                </>
-              )}
-              <ArrowRight className="w-3.5 h-3.5 text-slate-400" />
-              <span className={isOnHold ? "text-[#FF6600] font-black" : "text-[#FF6600] font-extrabold"}>
-                {effectiveCurrent}
-              </span>
-              <ArrowRight className="w-3.5 h-3.5 text-slate-400" />
-              <span>{destination || 'Destination'}</span>
-            </h4>
+
+            {/* Receiver Name and Destination Location */}
+            <div className="pt-0.5 space-y-0.5">
+              <h4 className="text-base md:text-lg font-extrabold text-slate-900 leading-tight">
+                {recipientName || 'Primary Receiver'}
+              </h4>
+              <p className="text-xs md:text-sm font-semibold text-slate-600 flex items-center gap-1.5">
+                <MapPin className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                <span>{effectiveDestination}</span>
+              </p>
+            </div>
           </div>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2.5 text-xs font-semibold bg-slate-50 px-3 py-1.5 rounded-xl border border-slate-100">
-          <span className="flex items-center gap-1.5 text-slate-600">
-            <span className="w-2.5 h-2.5 rounded-full bg-[#4D148C]" /> Origin
+        {/* Status Badge & Transit Indicators */}
+        <div className="flex flex-wrap items-center gap-2 text-xs font-semibold bg-slate-50 px-3 py-2 rounded-xl border border-slate-200/70">
+          <span className={`flex items-center gap-1.5 ${isOnHold ? 'text-[#FF6600] font-black' : 'text-[#4D148C] font-bold'}`}>
+            <span className={`w-2.5 h-2.5 rounded-full ${isOnHold ? 'bg-[#FF6600] animate-ping' : 'bg-[#4D148C] animate-pulse'}`} />
+            {isOnHold ? 'On Hold at Facility' : (currentStatus || 'Active in Transit')}
           </span>
           {routeWaypoints.length > 0 && (
-            <span className="flex items-center gap-1.5 text-[#4D148C]">
-              <span className="w-2.5 h-2.5 rounded-full border-2 border-[#4D148C] bg-white" /> Waypoints
-            </span>
+            <>
+              <span className="text-slate-300">•</span>
+              <span className="text-slate-600 font-semibold text-xs">
+                {routeWaypoints.length} Waypoint{routeWaypoints.length > 1 ? 's' : ''}
+              </span>
+            </>
           )}
-          <span className={`flex items-center gap-1.5 ${isOnHold ? 'text-[#FF6600] font-black' : 'text-[#FF6600]'}`}>
-            <span className={`w-2.5 h-2.5 rounded-full bg-[#FF6600] ${isOnHold ? 'animate-ping' : 'animate-pulse'}`} />
-            {isOnHold ? 'On Hold' : 'Current'}
-          </span>
-          <span className="flex items-center gap-1.5 text-emerald-600">
-            <span className="w-2.5 h-2.5 rounded-full bg-emerald-500" /> Destination
+          <span className="text-slate-300">•</span>
+          <span className="flex items-center gap-1 text-emerald-700">
+            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+            <span>En Route to Destination</span>
           </span>
         </div>
       </div>
