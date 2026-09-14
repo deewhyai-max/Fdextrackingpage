@@ -93,8 +93,14 @@
     -moz-osx-font-smoothing: grayscale;
   }
 
-  /* Browser Safety Resets */
-  input[type="text"] {
+  /* Browser Safety Resets & Zoom Prevention on Mobile */
+  input, select, textarea {
+    font-size: 16px !important;
+    touch-action: manipulation;
+    -webkit-text-size-adjust: 100%;
+  }
+
+  input[type="text"], input[type="search"] {
     -webkit-appearance: none;
     appearance: none;
     border-radius: var(--radius-xl);

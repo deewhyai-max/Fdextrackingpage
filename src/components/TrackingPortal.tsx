@@ -14,7 +14,8 @@ import {
   ShieldCheck,
   AlertCircle,
   Check,
-  ArrowRight
+  ArrowRight,
+  Share2
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { supabase, Shipment, ShipmentStatus, TrackingHistory } from '@/src/lib/supabase';
@@ -85,6 +86,7 @@ export default function TrackingPortal({ initialId }: { initialId?: string } = {
   const [hasSearched, setHasSearched] = useState(false);
   const [errorStatus, setErrorStatus] = useState<string | null>(null);
   const [clockNow, setClockNow] = useState<Date>(() => new Date());
+  const [copiedLink, setCopiedLink] = useState(false);
 
   // Format ID in 4-digit blocks
   const formatId = (value: string) => {
@@ -96,13 +98,14 @@ export default function TrackingPortal({ initialId }: { initialId?: string } = {
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const formatted = formatId(e.target.value);
     setTrackingId(formatted);
+    if (errorStatus) setErrorStatus(null);
   };
 
-  const trackShipment = useCallback(async (idToTrack?: string) => {
-    const rawInput = idToTrack !== undefined ? idToTrack : trackingId;
-    const id = rawInput.replace(/\s/g, '');
-    if (id.length !== 12) {
-      if (id.length > 0 && id.length < 12) {
+  // Core Supabase fetch function: queries Supabase using sanitized tracking ID
+  const fetchShipmentData = useCallback(async (trackingNumber: string) => {
+    const cleanDigits = trackingNumber.replace(/[\s-]/g, '').trim();
+    if (cleanDigits.length !== 12) {
+      if (cleanDigits.length > 0) {
         setErrorStatus("Please enter a valid 12-digit tracking number.");
       }
       return;
@@ -110,25 +113,13 @@ export default function TrackingPortal({ initialId }: { initialId?: string } = {
 
     setLoading(true);
     setHasSearched(true);
-
-    // Keep URL parameter synchronized so link immediately brings up the shipment
-    if (typeof window !== 'undefined') {
-      try {
-        const url = new URL(window.location.href);
-        if (url.searchParams.get('id') !== id) {
-          url.searchParams.set('id', id);
-          window.history.replaceState({}, '', url.toString());
-        }
-      } catch {
-        // Safe fallback in restrictive environments
-      }
-    }
+    setErrorStatus(null);
 
     try {
       const { data, error } = await supabase
         .from('shipments')
         .select('*')
-        .eq('id', id)
+        .eq('id', cleanDigits)
         .maybeSingle();
 
       if (error) {
@@ -152,27 +143,106 @@ export default function TrackingPortal({ initialId }: { initialId?: string } = {
     } finally {
       setLoading(false);
     }
-  }, [trackingId]);
+  }, []);
 
-  // Initial load: check URL parameter or initialId; default to reference tracking number so hitting the link brings up info immediately
-  useEffect(() => {
-    let target = '';
+  // Requirement 1: Dynamic URL Update on Tracking Search
+  // When a user submits a tracking search (or selects a shipment), clean the tracking number (sanitize spaces/dashes)
+  // and update the browser address bar without reloading the page using window.history.pushState
+  const trackShipment = useCallback((idToTrack?: string) => {
+    const trackingNumber = idToTrack !== undefined ? idToTrack : trackingId;
+    const cleanDigits = trackingNumber.replace(/[\s-]/g, '').trim();
+
+    if (cleanDigits.length !== 12) {
+      if (cleanDigits.length > 0) {
+        setErrorStatus("Please enter a valid 12-digit tracking number.");
+      }
+      return;
+    }
+
+    // Clean tracking number & update browser address bar without reloading page
+    const cleanId = trackingNumber.trim();
     if (typeof window !== 'undefined') {
-      const params = new URLSearchParams(window.location.search);
-      const fromUrl = params.get('id') || params.get('tracking') || initialId;
-      if (fromUrl && fromUrl.trim().length > 0) {
-        target = formatId(fromUrl);
+      try {
+        const newUrl = `${window.location.pathname}?id=${encodeURIComponent(cleanId)}`;
+        const currentUrl = `${window.location.pathname}${window.location.search}`;
+        if (currentUrl !== newUrl) {
+          window.history.pushState({ path: newUrl }, '', newUrl);
+        }
+      } catch (err) {
+        console.warn('URL pushState error:', err);
       }
     }
 
-    // Default tracking number if no ID in URL
-    if (!target) {
-      target = '7554 8775 0430';
-    }
+    fetchShipmentData(cleanDigits);
+  }, [trackingId, fetchShipmentData]);
 
-    setTrackingId(target);
-    trackShipment(target);
-  }, [initialId, trackShipment]);
+  // Requirement 2: Automatic Search on Page Load (Deep Linking)
+  // When the page initialises, check for the id query parameter in window.location.search:
+  // If sharedTrackingId exists:
+  // - Populate the search input field with sharedTrackingId.
+  // - Automatically trigger the Supabase tracking fetch function immediately.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    const urlParams = new URLSearchParams(window.location.search);
+    const sharedTrackingId = urlParams.get('id') || urlParams.get('tracking');
+
+    if (sharedTrackingId && sharedTrackingId.trim().length > 0) {
+      const rawTrimmed = sharedTrackingId.trim();
+      const cleanDigits = rawTrimmed.replace(/[\s-]/g, '');
+      const formattedInput = cleanDigits.length === 12 ? formatId(cleanDigits) : rawTrimmed;
+
+      setTrackingId(formattedInput);
+      fetchShipmentData(cleanDigits);
+    } else if (initialId && initialId.trim().length > 0) {
+      const rawTrimmed = initialId.trim();
+      const cleanDigits = rawTrimmed.replace(/[\s-]/g, '');
+      const formattedInput = cleanDigits.length === 12 ? formatId(cleanDigits) : rawTrimmed;
+
+      setTrackingId(formattedInput);
+      fetchShipmentData(cleanDigits);
+    } else {
+      // Default demo shipment if no id parameter is in URL
+      const defaultTrackingId = '7554 8775 0430';
+      setTrackingId(defaultTrackingId);
+      fetchShipmentData(defaultTrackingId.replace(/\s/g, ''));
+    }
+  }, [initialId, fetchShipmentData]);
+
+  // Browser Navigation Listener (PopState: Back/Forward buttons in browser history)
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    const handlePopState = () => {
+      const urlParams = new URLSearchParams(window.location.search);
+      const sharedTrackingId = urlParams.get('id') || urlParams.get('tracking');
+      if (sharedTrackingId && sharedTrackingId.trim().length > 0) {
+        const rawTrimmed = sharedTrackingId.trim();
+        const cleanDigits = rawTrimmed.replace(/[\s-]/g, '');
+        const formattedInput = cleanDigits.length === 12 ? formatId(cleanDigits) : rawTrimmed;
+        setTrackingId(formattedInput);
+        fetchShipmentData(cleanDigits);
+      }
+    };
+
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, [fetchShipmentData]);
+
+  const handleCopyShareLink = () => {
+    if (typeof window === 'undefined' || !shipment) return;
+    const cleanId = formatId(shipment.id);
+    const shareUrl = `${window.location.origin}${window.location.pathname}?id=${encodeURIComponent(cleanId)}`;
+    if (navigator?.clipboard?.writeText) {
+      navigator.clipboard.writeText(shareUrl).then(() => {
+        setCopiedLink(true);
+        setTimeout(() => setCopiedLink(false), 2000);
+      }).catch(() => {
+        setCopiedLink(true);
+        setTimeout(() => setCopiedLink(false), 2000);
+      });
+    }
+  };
 
   // Clock ticker for real-time live timestamp evaluation
   useEffect(() => {
@@ -299,24 +369,18 @@ export default function TrackingPortal({ initialId }: { initialId?: string } = {
         return tA - tB;
       });
 
-      // Live Time Comparison: find highest milestone whose timestamp has passed
-      let activeIdx = -1;
+      // Live Time Comparison: find highest milestone whose timestamp has passed (stageDate <= now)
+      let activeIdx = 0;
       for (let i = 0; i < rawHistory.length; i++) {
         const itemDate = parseTimestamp(rawHistory[i].timestamp);
-        const hasPassed = itemDate ? itemDate.getTime() <= nowTime : (i === 0);
-        if (hasPassed) {
+        if (itemDate && itemDate.getTime() <= nowTime) {
           activeIdx = i;
         }
       }
 
-      if (activeIdx === -1 && rawHistory.length > 0) {
-        activeIdx = 0;
-      }
-
-      return rawHistory.map((item, idx) => {
+      const rawHistoryResult = rawHistory.map((item, idx) => {
         const itemDate = parseTimestamp(item.timestamp);
         const rawStatus = (item.status || (item as any).status_name || '').trim();
-        const hasPassed = itemDate ? itemDate.getTime() <= nowTime : (idx <= activeIdx);
 
         // Determine node state:
         // COMPLETED: Stage timestamp is in the past (stageDate <= new Date() and before active)
@@ -348,6 +412,41 @@ export default function TrackingPortal({ initialId }: { initialId?: string } = {
           isUpcoming: nodeState === 'UPCOMING'
         };
       });
+
+      // If rawHistory doesn't include the full standard FedEx pipeline (e.g. only 1 stage filled),
+      // append the remaining upcoming MASTER_STAGES so the complete journey is clear
+      const existingStatusNames = new Set(
+        rawHistory.map(h => ((h.status || (h as any).status_name || '').trim().toLowerCase()))
+      );
+
+      let highestMasterIdx = 0;
+      rawHistory.forEach(h => {
+        const name = (h.status || (h as any).status_name || '').trim();
+        const mIdx = findStageIndex(name);
+        if (mIdx > highestMasterIdx) highestMasterIdx = mIdx;
+      });
+
+      const upcomingRemainingStages = [];
+      for (let m = highestMasterIdx + 1; m < MASTER_STAGES.length; m++) {
+        const stageName = MASTER_STAGES[m];
+        if (!existingStatusNames.has(stageName.toLowerCase())) {
+          upcomingRemainingStages.push({
+            id: `upcoming-stage-${m}`,
+            title: stageName,
+            originalTitle: stageName,
+            location: destinationLoc,
+            timestamp: null,
+            dateFormatted: 'Upcoming',
+            nodeState: 'UPCOMING' as const,
+            isHold: false,
+            isActive: false,
+            isCompleted: false,
+            isUpcoming: true
+          });
+        }
+      }
+
+      return [...rawHistoryResult, ...upcomingRemainingStages];
     }
 
     // Fallback if no history array in database: construct from MASTER_STAGES
@@ -409,21 +508,26 @@ export default function TrackingPortal({ initialId }: { initialId?: string } = {
               <Input
                 id="tracking_search_input"
                 name="tracking_search"
-                type="search"
+                type="text"
+                inputMode="numeric"
                 autoComplete="off"
+                autoCorrect="off"
+                autoCapitalize="none"
+                spellCheck={false}
                 placeholder="Enter 12-digit tracking number..."
                 value={trackingId}
                 onChange={handleInputChange}
                 onKeyDown={(e) => e.key === 'Enter' && trackShipment()}
-                className="h-11 pl-10 pr-3 bg-slate-50 border-slate-200/80 rounded-xl text-sm font-mono font-bold tracking-wider placeholder:font-sans placeholder:font-normal placeholder:tracking-normal focus-visible:ring-[#4D148C]"
+                className="h-11 pl-10 pr-3 bg-slate-50 border-slate-200/80 rounded-xl text-base font-mono font-bold tracking-wider placeholder:font-sans placeholder:font-normal placeholder:tracking-normal placeholder:text-sm focus-visible:ring-[#4D148C] touch-manipulation select-text"
+                style={{ fontSize: '16px' }}
               />
-              <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+              <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
             </div>
             <Button
               id="track_btn"
               onClick={() => trackShipment()}
               disabled={loading || trackingId.replace(/\s/g, '').length !== 12}
-              className="h-11 px-5 bg-[#FF6600] hover:bg-[#E05A00] text-white font-bold rounded-xl text-xs shadow-xs transition-all shrink-0 cursor-pointer disabled:opacity-50"
+              className="h-11 px-5 bg-[#FF6600] hover:bg-[#E05A00] text-white font-bold rounded-xl text-xs shadow-xs transition-all shrink-0 cursor-pointer disabled:opacity-50 touch-manipulation"
             >
               {loading ? (
                 <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
@@ -457,9 +561,28 @@ export default function TrackingPortal({ initialId }: { initialId?: string } = {
                 <p className="text-[10px] font-bold text-slate-400 tracking-wider uppercase">
                   Tracking Number
                 </p>
-                <p className="text-lg md:text-xl font-bold font-mono tracking-wider text-slate-900">
-                  {formatId(shipment.id)}
-                </p>
+                <div className="flex items-center justify-end gap-1.5">
+                  <p className="text-lg md:text-xl font-bold font-mono tracking-wider text-slate-900">
+                    {formatId(shipment.id)}
+                  </p>
+                  <button
+                    type="button"
+                    id="copy_share_link_btn"
+                    onClick={handleCopyShareLink}
+                    title="Copy direct shareable tracking link"
+                    className="p-1 rounded-md text-slate-400 hover:text-[#4D148C] hover:bg-slate-100 transition-colors cursor-pointer"
+                    aria-label="Copy share link"
+                  >
+                    {copiedLink ? (
+                      <Check className="w-3.5 h-3.5 text-emerald-600" />
+                    ) : (
+                      <Share2 className="w-3.5 h-3.5" />
+                    )}
+                  </button>
+                </div>
+                {copiedLink && (
+                  <p className="text-[10px] font-medium text-emerald-600">Link copied!</p>
+                )}
                 {shipment.service_type && (
                   <p className="text-xs font-semibold text-[#4D148C]">
                     {shipment.service_type}
