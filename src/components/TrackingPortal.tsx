@@ -35,6 +35,16 @@ export const MASTER_STAGES: ShipmentStatus[] = [
   'Delivered'
 ];
 
+export function parseTimestamp(dateStr?: string | null): Date | null {
+  if (!dateStr || dateStr === '0' || dateStr === 'Pending') return null;
+  let normalized = String(dateStr).trim();
+  if (normalized.includes(' ') && !normalized.includes('T')) {
+    normalized = normalized.replace(' ', 'T');
+  }
+  const date = new Date(normalized.includes('T') || normalized.includes('Z') ? normalized : normalized.replace(/-/g, '/'));
+  return isNaN(date.getTime()) ? null : date;
+}
+
 export function findStageIndex(statusStr?: string | null): number {
   if (!statusStr) return -1;
   const clean = statusStr.toLowerCase().trim();
@@ -89,7 +99,8 @@ export default function TrackingPortal({ initialId }: { initialId?: string } = {
   };
 
   const trackShipment = useCallback(async (idToTrack?: string) => {
-    const id = (idToTrack || trackingId).replace(/\s/g, '');
+    const rawInput = idToTrack !== undefined ? idToTrack : trackingId;
+    const id = rawInput.replace(/\s/g, '');
     if (id.length !== 12) {
       if (id.length > 0 && id.length < 12) {
         setErrorStatus("Please enter a valid 12-digit tracking number.");
@@ -99,6 +110,19 @@ export default function TrackingPortal({ initialId }: { initialId?: string } = {
 
     setLoading(true);
     setHasSearched(true);
+
+    // Keep URL parameter synchronized so link immediately brings up the shipment
+    if (typeof window !== 'undefined') {
+      try {
+        const url = new URL(window.location.href);
+        if (url.searchParams.get('id') !== id) {
+          url.searchParams.set('id', id);
+          window.history.replaceState({}, '', url.toString());
+        }
+      } catch {
+        // Safe fallback in restrictive environments
+      }
+    }
 
     try {
       const { data, error } = await supabase
@@ -130,25 +154,33 @@ export default function TrackingPortal({ initialId }: { initialId?: string } = {
     }
   }, [trackingId]);
 
-  // Initial load: only track if a tracking ID is explicitly provided in URL params or initialId prop
+  // Initial load: check URL parameter or initialId; default to reference tracking number so hitting the link brings up info immediately
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const idFromUrl = params.get('id') || params.get('tracking') || initialId;
-    if (idFromUrl && idFromUrl.trim().length > 0) {
-      const formatted = formatId(idFromUrl);
-      setTrackingId(formatted);
-      trackShipment(formatted);
+    let target = '';
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      const fromUrl = params.get('id') || params.get('tracking') || initialId;
+      if (fromUrl && fromUrl.trim().length > 0) {
+        target = formatId(fromUrl);
+      }
     }
+
+    // Default tracking number if no ID in URL
+    if (!target) {
+      target = '7554 8775 0430';
+    }
+
+    setTrackingId(target);
+    trackShipment(target);
   }, [initialId, trackShipment]);
 
-  // Clock ticker for real-time auto-advance
+  // Clock ticker for real-time live timestamp evaluation
   useEffect(() => {
-    if (!shipment?.auto_advance || shipment?.is_on_hold) return;
     const interval = setInterval(() => {
       setClockNow(new Date());
     }, 5000);
     return () => clearInterval(interval);
-  }, [shipment?.auto_advance, shipment?.is_on_hold]);
+  }, []);
 
   // Date format matching reference image: "September 11, 2026, 9:19 AM"
   const formatMilestoneDate = (dateStr?: string | null) => {
@@ -204,110 +236,149 @@ export default function TrackingPortal({ initialId }: { initialId?: string } = {
     }
 
     const isOnHold = Boolean(shipment.is_on_hold || shipment.status === 'On Hold');
-    const history = Array.isArray(shipment.history) ? shipment.history : [];
+    const nowTime = clockNow.getTime();
+    const rawHistory = Array.isArray(shipment.history) ? [...shipment.history] : [];
 
-    let computedIndex = 0;
+    if (rawHistory.length > 0) {
+      // Sort chronologically ascending
+      rawHistory.sort((a, b) => {
+        const tA = parseTimestamp(a.timestamp)?.getTime() ?? 0;
+        const tB = parseTimestamp(b.timestamp)?.getTime() ?? 0;
+        return tA - tB;
+      });
 
-    if (shipment.auto_advance && !isOnHold) {
-      let highestPassed = -1;
-      for (const item of history) {
-        const stageIdx = findStageIndex(item.status || (item as any).status_name);
-        if (stageIdx >= 0 && item.timestamp) {
-          let normalized = String(item.timestamp).trim().replace(' ', 'T');
-          const itemDate = new Date(normalized);
-          if (!isNaN(itemDate.getTime()) && itemDate.getTime() <= clockNow.getTime()) {
-            if (stageIdx > highestPassed) highestPassed = stageIdx;
-          }
+      // Find highest milestone whose timestamp has passed (stageDate <= now)
+      let activeIdx = 0;
+      for (let i = 0; i < rawHistory.length; i++) {
+        const itemDate = parseTimestamp(rawHistory[i].timestamp);
+        if (itemDate && itemDate.getTime() <= nowTime) {
+          activeIdx = i;
         }
       }
-      computedIndex = highestPassed >= 0 ? highestPassed : (findStageIndex(shipment.status) >= 0 ? findStageIndex(shipment.status) : 0);
-    } else {
-      let explicitIdx = -1;
-      if (shipment.status && shipment.status !== 'On Hold') {
-        explicitIdx = findStageIndex(shipment.status);
-      }
-      if (explicitIdx >= 0) {
-        computedIndex = explicitIdx;
-      } else if (history.length > 0) {
-        let maxHistIdx = -1;
-        for (const item of history) {
-          const idx = findStageIndex(item.status || (item as any).status_name);
-          if (idx > maxHistIdx) maxHistIdx = idx;
-        }
-        computedIndex = maxHistIdx >= 0 ? maxHistIdx : 0;
-      }
+
+      const activeItem = rawHistory[activeIdx];
+      const rawName = (activeItem?.status || (activeItem as any)?.status_name || shipment.status || 'In Transit').trim();
+      const effectiveOnHold = isOnHold || rawName.toLowerCase() === 'on hold';
+
+      return {
+        activeStageIndex: activeIdx,
+        activeStageName: effectiveOnHold ? 'On Hold' : rawName,
+        isEffectiveOnHold: effectiveOnHold,
+        activeLocation: activeItem?.location || originLoc,
+        activeTimestamp: activeItem?.timestamp || null
+      };
     }
 
-    let activeLoc = originLoc;
-    let activeTime: string | null = null;
-    const currentMilestone = getMilestoneForStage(MASTER_STAGES[computedIndex], history);
-    if (currentMilestone) {
-      activeLoc = currentMilestone.location || originLoc;
-      activeTime = currentMilestone.timestamp;
-    } else if (history.length > 0) {
-      activeLoc = history[0].location || originLoc;
-      activeTime = history[0].timestamp;
-    }
-
+    // Fallback if no history array
+    const explicitIdx = findStageIndex(shipment.status);
+    const validIdx = explicitIdx >= 0 ? explicitIdx : 0;
     return {
-      activeStageIndex: computedIndex,
-      activeStageName: MASTER_STAGES[computedIndex] || 'In Transit',
+      activeStageIndex: validIdx,
+      activeStageName: isOnHold ? 'On Hold' : (MASTER_STAGES[validIdx] || 'In Transit'),
       isEffectiveOnHold: isOnHold,
-      activeLocation: activeLoc,
-      activeTimestamp: activeTime
+      activeLocation: originLoc,
+      activeTimestamp: null
     };
   }, [shipment, clockNow, originLoc]);
 
   const { activeStageIndex, activeStageName, isEffectiveOnHold, activeLocation } = stageComputation;
 
-  // Chronological history for timeline (matching IMG_1764.png)
+  // Chronological history with strict Node UI States (COMPLETED, ACTIVE, UPCOMING) based on live time comparison
   const chronologicalHistory = useMemo(() => {
     if (!shipment) return [];
 
-    const hist = Array.isArray(shipment.history) ? [...shipment.history] : [];
-    
-    if (hist.length > 0) {
+    const nowTime = clockNow.getTime();
+    const isOnHold = isEffectiveOnHold;
+    const rawHistory = Array.isArray(shipment.history) ? [...shipment.history] : [];
+
+    if (rawHistory.length > 0) {
       // Sort chronologically ascending (earliest milestone first, latest last)
-      hist.sort((a, b) => {
-        const tA = new Date(a.timestamp || 0).getTime();
-        const tB = new Date(b.timestamp || 0).getTime();
+      rawHistory.sort((a, b) => {
+        const tA = parseTimestamp(a.timestamp)?.getTime() ?? 0;
+        const tB = parseTimestamp(b.timestamp)?.getTime() ?? 0;
         return tA - tB;
       });
 
-      return hist.map((item, idx) => {
-        const isLast = idx === hist.length - 1;
+      // Live Time Comparison: find highest milestone whose timestamp has passed
+      let activeIdx = -1;
+      for (let i = 0; i < rawHistory.length; i++) {
+        const itemDate = parseTimestamp(rawHistory[i].timestamp);
+        const hasPassed = itemDate ? itemDate.getTime() <= nowTime : (i === 0);
+        if (hasPassed) {
+          activeIdx = i;
+        }
+      }
+
+      if (activeIdx === -1 && rawHistory.length > 0) {
+        activeIdx = 0;
+      }
+
+      return rawHistory.map((item, idx) => {
+        const itemDate = parseTimestamp(item.timestamp);
         const rawStatus = (item.status || (item as any).status_name || '').trim();
-        const isOnHoldMilestone = rawStatus.toLowerCase() === 'on hold' || (isLast && isEffectiveOnHold);
+        const hasPassed = itemDate ? itemDate.getTime() <= nowTime : (idx <= activeIdx);
+
+        // Determine node state:
+        // COMPLETED: Stage timestamp is in the past (stageDate <= new Date() and before active)
+        // ACTIVE: The highest milestone whose timestamp has passed
+        // UPCOMING: Stage timestamp is strictly in the future (stageDate > new Date())
+        let nodeState: 'COMPLETED' | 'ACTIVE' | 'UPCOMING';
+        if (idx < activeIdx) {
+          nodeState = 'COMPLETED';
+        } else if (idx === activeIdx) {
+          nodeState = 'ACTIVE';
+        } else {
+          nodeState = 'UPCOMING';
+        }
+
+        // On Hold Rule: If shipment.is_on_hold === true, replace ONLY the active stage icon with the active Orange (#FF6600) Hold badge
+        const isHoldNode = (nodeState === 'ACTIVE' && isOnHold) || (rawStatus.toLowerCase() === 'on hold' && nodeState !== 'UPCOMING');
 
         return {
           id: `hist-${idx}`,
-          title: isOnHoldMilestone ? 'On Hold' : rawStatus,
+          title: isHoldNode ? 'On Hold' : rawStatus,
+          originalTitle: rawStatus,
           location: item.location || activeLocation || originLoc,
           timestamp: item.timestamp,
           dateFormatted: formatMilestoneDate(item.timestamp),
-          isOnHold: isOnHoldMilestone,
-          isCompleted: !isOnHoldMilestone,
-          isCurrent: isLast
+          nodeState,
+          isHold: isHoldNode,
+          isActive: nodeState === 'ACTIVE',
+          isCompleted: nodeState === 'COMPLETED',
+          isUpcoming: nodeState === 'UPCOMING'
         };
       });
     }
 
-    // Fallback if no history array in database
-    return MASTER_STAGES.slice(0, activeStageIndex + 1).map((stage, idx) => {
-      const isLast = idx === activeStageIndex;
-      const isOnHoldMilestone = isLast && isEffectiveOnHold;
+    // Fallback if no history array in database: construct from MASTER_STAGES
+    const targetIdx = Math.max(0, findStageIndex(shipment.status));
+    return MASTER_STAGES.map((stage, idx) => {
+      let nodeState: 'COMPLETED' | 'ACTIVE' | 'UPCOMING';
+      if (idx < targetIdx) {
+        nodeState = 'COMPLETED';
+      } else if (idx === targetIdx) {
+        nodeState = 'ACTIVE';
+      } else {
+        nodeState = 'UPCOMING';
+      }
+
+      const isHoldNode = nodeState === 'ACTIVE' && isOnHold;
+
       return {
         id: `stage-${idx}`,
-        title: isOnHoldMilestone ? 'On Hold' : stage,
-        location: idx === 0 ? originLoc : activeLocation,
+        title: isHoldNode ? 'On Hold' : stage,
+        originalTitle: stage,
+        location: idx === 0 ? originLoc : destinationLoc,
         timestamp: null,
-        dateFormatted: 'Completed',
-        isOnHold: isOnHoldMilestone,
-        isCompleted: !isOnHoldMilestone,
-        isCurrent: isLast
+        dateFormatted: nodeState === 'UPCOMING' ? 'Upcoming' : 'Completed',
+        nodeState,
+        isHold: isHoldNode,
+        isActive: nodeState === 'ACTIVE',
+        isCompleted: nodeState === 'COMPLETED',
+        isUpcoming: nodeState === 'UPCOMING'
       };
     });
-  }, [shipment, isEffectiveOnHold, activeStageIndex, originLoc, activeLocation]);
+  }, [shipment, isEffectiveOnHold, clockNow, originLoc, destinationLoc, activeLocation]);
 
   return (
     <div className="min-h-screen bg-white font-sans text-[#141414]">
@@ -511,40 +582,84 @@ export default function TrackingPortal({ initialId }: { initialId?: string } = {
               {/* Vertical Timeline */}
               <div className="space-y-0 relative pl-1">
                 {chronologicalHistory.map((item, idx) => {
-                  const isCurrentOnHold = item.isCurrent && isEffectiveOnHold;
                   const isLast = idx === chronologicalHistory.length - 1;
+                  const nextItem = !isLast ? chronologicalHistory[idx + 1] : null;
+                  const isLineCompleted = (item.isCompleted || item.isActive) && (nextItem?.isCompleted || nextItem?.isActive);
 
                   return (
                     <div key={item.id} className="flex gap-4 min-h-[76px] relative">
                       {/* Timeline Track & Node */}
                       <div className="flex flex-col items-center">
-                        {isCurrentOnHold ? (
-                          /* Current On Hold Node: Orange circle with white truck icon */
+                        {item.isHold ? (
+                          /* Active Hold Node: Orange (#FF6600) circle with white truck icon */
                           <div className="w-10 h-10 rounded-full bg-[#FF6600] flex items-center justify-center text-white shrink-0 shadow-sm z-10">
                             <Truck className="w-5 h-5 text-white" />
                           </div>
-                        ) : (
-                          /* Completed Node: Deep purple circle with white concentric dot */
+                        ) : item.isActive ? (
+                          /* Active Node: Highlighted FedEx Purple icon with truck */
+                          <div className="w-10 h-10 rounded-full bg-[#4D148C] text-white flex items-center justify-center shrink-0 shadow-md ring-4 ring-[#4D148C]/20 z-10">
+                            <Truck className="w-5 h-5 text-white" />
+                          </div>
+                        ) : item.isCompleted ? (
+                          /* Completed Node: Solid purple circle with white concentric dot */
                           <div className="w-9 h-9 rounded-full bg-[#4D148C] flex items-center justify-center shrink-0 z-10">
                             <div className="w-2.5 h-2.5 rounded-full bg-white" />
+                          </div>
+                        ) : (
+                          /* Upcoming Node: Grayed-out node with light gray border & inner dot */
+                          <div className="w-9 h-9 rounded-full bg-slate-50 border-2 border-slate-200 flex items-center justify-center shrink-0 z-10">
+                            <div className="w-2 h-2 rounded-full bg-slate-300" />
                           </div>
                         )}
 
                         {/* Connecting Line */}
                         {!isLast && (
-                          <div className="w-[2.5px] bg-[#4D148C] flex-grow my-0.5" />
+                          <div className={cn(
+                            "flex-grow my-0.5",
+                            isLineCompleted ? "w-[2.5px] bg-[#4D148C]" : "w-[2px] bg-slate-200"
+                          )} />
                         )}
                       </div>
 
                       {/* Milestone Text Content */}
                       <div className="pb-6 pt-1 flex-grow space-y-0.5">
+                        {item.isHold ? (
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <p className="text-base font-bold text-[#FF2D20]">
+                              {item.title}
+                            </p>
+                            <span className="px-2 py-0.5 rounded-md bg-red-50 border border-red-200 text-[#FF2D20] text-[10px] font-bold tracking-wider uppercase">
+                              ON HOLD
+                            </span>
+                          </div>
+                        ) : item.isActive ? (
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <p className="text-base font-bold text-[#4D148C]">
+                              {item.title}
+                            </p>
+                            <span className="px-2 py-0.5 rounded-md bg-[#4D148C]/10 border border-[#4D148C]/20 text-[#4D148C] text-[10px] font-bold tracking-wider uppercase">
+                              CURRENT
+                            </span>
+                          </div>
+                        ) : item.isCompleted ? (
+                          <p className="text-base font-bold text-slate-900">
+                            {item.title}
+                          </p>
+                        ) : (
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <p className="text-base font-semibold text-slate-400">
+                              {item.title}
+                            </p>
+                            <span className="px-2 py-0.5 rounded-md bg-slate-100 border border-slate-200 text-slate-400 text-[10px] font-bold tracking-wider uppercase">
+                              UPCOMING
+                            </span>
+                          </div>
+                        )}
+
                         <p className={cn(
-                          "text-base font-bold",
-                          isCurrentOnHold ? "text-[#FF2D20]" : "text-slate-900"
+                          "text-xs font-normal leading-relaxed",
+                          item.isUpcoming ? "text-slate-400" : "text-slate-500"
                         )}>
-                          {item.title}
-                        </p>
-                        <p className="text-xs text-slate-500 font-normal leading-relaxed">
                           {item.location} | {item.dateFormatted}
                         </p>
                       </div>
