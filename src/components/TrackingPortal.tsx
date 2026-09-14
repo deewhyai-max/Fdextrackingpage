@@ -124,21 +124,21 @@ export default function TrackingPortal({ initialId }: { initialId?: string } = {
 
       if (error) {
         console.error('Supabase Error:', error);
-        setErrorStatus("Unable to connect to database. Please try again.");
+        setErrorStatus("Unable to connect to database. Please check your connection and try again.");
         setShipment(null);
         return;
       }
 
       if (!data) {
         setShipment(null);
-        setErrorStatus("Tracking number not found in logistics network.");
+        setErrorStatus(`No shipment record found for tracking number ${formatId(cleanDigits)}.`);
       } else {
         setShipment(data as Shipment);
         setErrorStatus(null);
       }
     } catch (err) {
       console.error('Fetch Error:', err);
-      setErrorStatus("An unexpected error occurred. Please refresh.");
+      setErrorStatus("Connection error. Please verify your network and try again.");
       setShipment(null);
     } finally {
       setLoading(false);
@@ -200,12 +200,15 @@ export default function TrackingPortal({ initialId }: { initialId?: string } = {
       const formattedInput = cleanDigits.length === 12 ? formatId(cleanDigits) : rawTrimmed;
 
       setTrackingId(formattedInput);
-      fetchShipmentData(cleanDigits);
+      if (cleanDigits.length === 12) {
+        fetchShipmentData(cleanDigits);
+      }
     } else {
-      // Default demo shipment if no id parameter is in URL
-      const defaultTrackingId = '7554 8775 0430';
-      setTrackingId(defaultTrackingId);
-      fetchShipmentData(defaultTrackingId.replace(/\s/g, ''));
+      // Clean slate: leave empty waiting for user to enter tracking number
+      setTrackingId('');
+      setShipment(null);
+      setHasSearched(false);
+      setErrorStatus(null);
     }
   }, [initialId, fetchShipmentData]);
 
@@ -221,7 +224,15 @@ export default function TrackingPortal({ initialId }: { initialId?: string } = {
         const cleanDigits = rawTrimmed.replace(/[\s-]/g, '');
         const formattedInput = cleanDigits.length === 12 ? formatId(cleanDigits) : rawTrimmed;
         setTrackingId(formattedInput);
-        fetchShipmentData(cleanDigits);
+        if (cleanDigits.length === 12) {
+          fetchShipmentData(cleanDigits);
+        }
+      } else {
+        // Reset to initial empty state on navigating back to root
+        setTrackingId('');
+        setShipment(null);
+        setHasSearched(false);
+        setErrorStatus(null);
       }
     };
 
@@ -287,6 +298,23 @@ export default function TrackingPortal({ initialId }: { initialId?: string } = {
       day: 'numeric',
       year: 'numeric'
     });
+  };
+
+  const formatCurrency = (amount?: number | string | null, currencyStr?: string | null) => {
+    if (amount === undefined || amount === null || amount === '') return null;
+    const num = Number(amount);
+    if (isNaN(num)) return null;
+    const rawCurrency = (currencyStr || 'USD').trim().toUpperCase();
+    try {
+      return new Intl.NumberFormat('en-US', {
+        style: 'currency',
+        currency: rawCurrency,
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+      }).format(num);
+    } catch {
+      return `${rawCurrency} ${num.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    }
   };
 
   // Locations
@@ -659,15 +687,58 @@ export default function TrackingPortal({ initialId }: { initialId?: string } = {
               </div>
             </div>
 
-            {/* Total Shipment Value Card (IMG_1765.png reference) */}
-            {(shipment.asset_value || shipment.declared_value) ? (
-              <div className="bg-[#FBFBFC] border border-slate-200/75 rounded-2xl p-5 space-y-1 shadow-2xs">
-                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Total Shipment Value</p>
-                <p className="text-xl md:text-2xl font-bold text-slate-900">
-                  {shipment.currency || 'SEK'} {Number(shipment.asset_value || shipment.declared_value).toLocaleString('en-US', { minimumFractionDigits: 2 })}
-                </p>
+            {/* Financial Details: Total Shipment Value & Service Fee */}
+            {((shipment.asset_value || shipment.declared_value) || (shipment.service_fee !== undefined && shipment.service_fee !== null)) && (
+              <div className={cn(
+                "grid gap-4",
+                ((shipment.asset_value || shipment.declared_value) && (shipment.service_fee !== undefined && shipment.service_fee !== null))
+                  ? "grid-cols-1 sm:grid-cols-2"
+                  : "grid-cols-1"
+              )}>
+                {/* Total Shipment Value Card */}
+                {(shipment.asset_value || shipment.declared_value) ? (
+                  <div className="bg-[#FBFBFC] border border-slate-200/75 rounded-2xl p-5 space-y-1 shadow-2xs">
+                    <div className="flex items-center justify-between">
+                      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                        Total Shipment Value
+                      </p>
+                      <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">
+                        {shipment.currency || 'USD'}
+                      </span>
+                    </div>
+                    <p className="text-xl md:text-2xl font-bold text-slate-900">
+                      {formatCurrency(shipment.asset_value || shipment.declared_value, shipment.currency) ||
+                        formatCurrency(0, shipment.currency) || '$0.00'}
+                    </p>
+                  </div>
+                ) : null}
+
+                {/* Service Fee Card */}
+                {(shipment.service_fee !== undefined && shipment.service_fee !== null) ? (
+                  <div className="bg-[#FBFBFC] border border-slate-200/75 rounded-2xl p-5 space-y-1 shadow-2xs">
+                    <div className="flex items-center justify-between">
+                      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                        Service Fee
+                      </p>
+                      {Number(shipment.service_fee) > 0 ? (
+                        <span className="px-2 py-0.5 rounded-md bg-orange-50 border border-orange-200/60 text-[#FF6600] text-[10px] font-bold uppercase tracking-wider">
+                          Standard Fee
+                        </span>
+                      ) : (
+                        <span className="px-2 py-0.5 rounded-md bg-emerald-50 border border-emerald-200/60 text-emerald-700 text-[10px] font-bold uppercase tracking-wider">
+                          Included
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-xl md:text-2xl font-bold text-slate-900">
+                      {Number(shipment.service_fee) > 0
+                        ? formatCurrency(shipment.service_fee, shipment.currency)
+                        : `${formatCurrency(0, shipment.currency) || '$0.00'} (Included)`}
+                    </p>
+                  </div>
+                ) : null}
               </div>
-            ) : null}
+            )}
 
             {/* Estimated Delivery Date Card */}
             {shipment.estimated_delivery_date && (
