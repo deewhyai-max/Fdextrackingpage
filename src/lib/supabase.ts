@@ -66,6 +66,8 @@ export interface Shipment {
   service_type?: string;
 
   // Package specifications
+  package_name?: string;
+  shipment_name?: string;
   package_type?: string;
   weight?: string | number;
   weight_unit?: string;

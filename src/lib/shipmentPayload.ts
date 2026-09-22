@@ -24,6 +24,8 @@ export interface ShipmentFormData {
   estimated_delivery_date?: string;
 
   // 4. Package Specifications
+  package_name?: string;
+  shipment_name?: string;
   package_type?: string;
   weight?: number | string;
   weight_unit?: 'lbs' | 'kg' | string;
@@ -72,6 +74,7 @@ export interface ShipmentInsertPayload {
   estimated_delivery_date: string | null;
 
   // 4. Package Specifications
+  package_name: string | null;
   package_type: string;
   weight: number;
   weight_unit: string;
@@ -267,6 +270,7 @@ export function buildShipmentPayload(
     declared_value: declaredValue,
     estimated_delivery_date: estimatedDeliveryDate,
 
+    package_name: (formData.package_name || formData.shipment_name || '').trim() || null,
     package_type: packageType,
     weight,
     weight_unit: weightUnit,

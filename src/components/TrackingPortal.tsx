@@ -489,6 +489,7 @@ export default function TrackingPortal({ initialId }: { initialId?: string } = {
 
   const { activeStageIndex, activeStageName, isEffectiveOnHold, activeLocation } = processedStagesData;
   const chronologicalHistory = processedStagesData.stages;
+  const packageName = (shipment?.package_name || (shipment as any)?.shipment_name || (shipment as any)?.package_title || '').trim();
 
   return (
     <div className="min-h-screen bg-white font-sans text-[#141414]">
@@ -566,6 +567,15 @@ export default function TrackingPortal({ initialId }: { initialId?: string } = {
                 )}>
                   {isEffectiveOnHold ? 'ON HOLD' : activeStageName}
                 </h1>
+                {packageName && (
+                  <div className="flex items-center gap-1.5 pt-1">
+                    <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-100 border border-slate-200/80 text-xs font-bold text-slate-800">
+                      <Package className="w-3.5 h-3.5 text-[#FF6600] shrink-0" />
+                      <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">Package:</span>
+                      <span className="text-slate-900 font-bold">{packageName}</span>
+                    </span>
+                  </div>
+                )}
               </div>
 
               <div className="text-right space-y-0.5">
@@ -659,6 +669,15 @@ export default function TrackingPortal({ initialId }: { initialId?: string } = {
                 )}
               </div>
               <div className="grid grid-cols-2 gap-4 pt-1">
+                {packageName && (
+                  <div className="space-y-0.5 col-span-2 pb-2.5 mb-1 border-b border-slate-200/60">
+                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Package / Shipment Name</p>
+                    <p className="text-sm md:text-base font-extrabold text-slate-900 flex items-center gap-2">
+                      <Package className="w-4 h-4 text-[#FF6600] shrink-0" />
+                      <span>{packageName}</span>
+                    </p>
+                  </div>
+                )}
                 <div className="space-y-0.5">
                   <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Package Type</p>
                   <p className="text-sm font-bold text-slate-900">{shipment.package_type || 'FedEx Box'}</p>
@@ -671,57 +690,67 @@ export default function TrackingPortal({ initialId }: { initialId?: string } = {
             </div>
 
             {/* Financial Details: Total Shipment Value & Service Fee */}
-            {((shipment.asset_value || shipment.declared_value) || (shipment.service_fee !== null && shipment.service_fee !== undefined)) && (
-              <div className={cn(
-                "grid gap-4",
-                ((shipment.asset_value || shipment.declared_value) && (shipment.service_fee !== null && shipment.service_fee !== undefined))
-                  ? "grid-cols-1 sm:grid-cols-2"
-                  : "grid-cols-1"
-              )}>
-                {/* Total Shipment Value Card */}
-                {(shipment.asset_value || shipment.declared_value) ? (
-                  <div className="bg-[#FBFBFC] border border-slate-200/75 rounded-2xl p-5 space-y-1 shadow-2xs">
-                    <div className="flex items-center justify-between">
-                      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
-                        Total Shipment Value
-                      </p>
-                      <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">
-                        {shipment.currency || 'USD'}
-                      </span>
-                    </div>
-                    <p className="text-xl md:text-2xl font-bold text-slate-900">
-                      {formatCurrency(shipment.asset_value || shipment.declared_value, shipment.currency) ||
-                        formatCurrency(0, shipment.currency) || '$0.00'}
-                    </p>
-                  </div>
-                ) : null}
+            {(() => {
+              const rawAssetVal = shipment.asset_value ?? shipment.declared_value;
+              const numericAssetVal = rawAssetVal !== null && rawAssetVal !== undefined && String(rawAssetVal).trim() !== ''
+                ? Number(rawAssetVal)
+                : 0;
+              const hasAssetValue = !isNaN(numericAssetVal) && numericAssetVal > 0;
 
-                {/* Service Fee Card - STRICT: If service fee is null or undefined, don't show it at all */}
-                {(shipment.service_fee !== null && shipment.service_fee !== undefined) ? (
-                  <div className="bg-[#FBFBFC] border border-slate-200/75 rounded-2xl p-5 space-y-1 shadow-2xs">
-                    <div className="flex items-center justify-between">
-                      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
-                        Service Fee
+              const rawServiceFee = shipment.service_fee;
+              const numericServiceFee = rawServiceFee !== null && rawServiceFee !== undefined && String(rawServiceFee).trim() !== ''
+                ? Number(rawServiceFee)
+                : 0;
+              // STRICT: Only show Service Fee if it is greater than 1 (never show 0, 0.00, empty, or null)
+              const hasServiceFee = !isNaN(numericServiceFee) && numericServiceFee > 1;
+
+              if (!hasAssetValue && !hasServiceFee) {
+                return null;
+              }
+
+              return (
+                <div className={cn(
+                  "grid gap-4",
+                  (hasAssetValue && hasServiceFee)
+                    ? "grid-cols-1 sm:grid-cols-2"
+                    : "grid-cols-1"
+                )}>
+                  {/* Total Shipment Value Card */}
+                  {hasAssetValue && (
+                    <div className="bg-[#FBFBFC] border border-slate-200/75 rounded-2xl p-5 space-y-1 shadow-2xs">
+                      <div className="flex items-center justify-between">
+                        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                          Total Shipment Value
+                        </p>
+                        <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">
+                          {shipment.currency || 'USD'}
+                        </span>
+                      </div>
+                      <p className="text-xl md:text-2xl font-bold text-slate-900">
+                        {formatCurrency(numericAssetVal, shipment.currency)}
                       </p>
-                      {Number(shipment.service_fee) > 0 ? (
+                    </div>
+                  )}
+
+                  {/* Service Fee Card - STRICT: Never shown if 0, 0.00, null, or not greater than 1 */}
+                  {hasServiceFee && (
+                    <div className="bg-[#FBFBFC] border border-slate-200/75 rounded-2xl p-5 space-y-1 shadow-2xs">
+                      <div className="flex items-center justify-between">
+                        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                          Service Fee
+                        </p>
                         <span className="px-2 py-0.5 rounded-md bg-orange-50 border border-orange-200/60 text-[#FF6600] text-[10px] font-bold uppercase tracking-wider">
                           Standard Fee
                         </span>
-                      ) : (
-                        <span className="px-2 py-0.5 rounded-md bg-emerald-50 border border-emerald-200/60 text-emerald-700 text-[10px] font-bold uppercase tracking-wider">
-                          Included
-                        </span>
-                      )}
+                      </div>
+                      <p className="text-xl md:text-2xl font-bold text-slate-900">
+                        {formatCurrency(numericServiceFee, shipment.currency)}
+                      </p>
                     </div>
-                    <p className="text-xl md:text-2xl font-bold text-slate-900">
-                      {Number(shipment.service_fee) > 0
-                        ? formatCurrency(shipment.service_fee, shipment.currency)
-                        : `${formatCurrency(0, shipment.currency) || '$0.00'} (Included)`}
-                    </p>
-                  </div>
-                ) : null}
-              </div>
-            )}
+                  )}
+                </div>
+              );
+            })()}
 
             {/* Estimated Delivery Date Card */}
             {shipment.estimated_delivery_date && (
@@ -740,6 +769,7 @@ export default function TrackingPortal({ initialId }: { initialId?: string } = {
                 currentLocation={activeLocation}
                 destination={destinationLoc}
                 recipientName={shipment.recipient_name}
+                packageName={packageName}
                 destinationAddress={shipment.destination_address}
                 currentStatus={isEffectiveOnHold ? 'On Hold' : activeStageName}
                 routeWaypoints={shipment.route_waypoints || []}
