@@ -385,31 +385,50 @@ export default function TrackingPortal({ initialId }: { initialId?: string } = {
       });
     }
 
-    // 3. Strict Completed vs. Upcoming Rendering:
-    // Check timestamps sequentially: Once a stage's timestamp is in the future relative to new Date(),
-    // ALL SUBSEQUENT STAGES must automatically render as gray "UPCOMING" nodes.
+    // 3. Accurate History Reading to Determine Current Active Milestone
+    // Inspect all milestones recorded in shipment.history (and stageMap):
+    // - Check passed timestamps (timestamp <= nowTime) vs. future timestamps
+    // - If auto_advance is explicitly false and shipment.status is set, honor explicit status
+    // - Find the highest milestone that has occurred as the active stage
     const nowTime = clockNow.getTime();
     let activeIdx = 0;
-    let encounteredUpcoming = false;
 
-    for (let i = 0; i < MASTER_STAGES.length; i++) {
-      const entry = stageMap.get(i);
-      if (entry && entry.timestamp) {
-        const entryDate = parseTimestamp(entry.timestamp);
-        if (entryDate && entryDate.getTime() <= nowTime) {
-          if (!encounteredUpcoming) {
-            activeIdx = i;
+    if (shipment.auto_advance === false && explicitIdx >= 0) {
+      activeIdx = explicitIdx;
+    } else {
+      let highestPastStage = -1;
+      let lowestFutureStage = 999;
+
+      for (let i = 0; i < MASTER_STAGES.length; i++) {
+        if (stageMap.has(i)) {
+          const entry = stageMap.get(i);
+          const t = parseTimestamp(entry?.timestamp);
+          if (t) {
+            if (t.getTime() <= nowTime) {
+              if (i > highestPastStage) highestPastStage = i;
+            } else {
+              if (i < lowestFutureStage) lowestFutureStage = i;
+            }
+          } else {
+            // Milestone is recorded without a future timestamp
+            if (i > highestPastStage && i < lowestFutureStage) {
+              highestPastStage = i;
+            }
           }
-        } else {
-          // Timestamp is in the future
-          encounteredUpcoming = true;
         }
+      }
+
+      if (highestPastStage >= 0) {
+        activeIdx = highestPastStage;
+      } else if (explicitIdx >= 0) {
+        activeIdx = explicitIdx;
       } else {
-        // If an intermediate milestone has no recorded past timestamp,
-        // it and all subsequent stages become upcoming
-        if (i > 0) {
-          encounteredUpcoming = true;
-        }
+        activeIdx = 0;
+      }
+
+      // If explicitIdx is set and higher than highestPastStage and has no future milestones before it
+      if (explicitIdx >= 0 && explicitIdx > activeIdx && explicitIdx < lowestFutureStage) {
+        activeIdx = explicitIdx;
       }
     }
 
@@ -751,13 +770,13 @@ export default function TrackingPortal({ initialId }: { initialId?: string } = {
                       {/* Timeline Track & Node */}
                       <div className="flex flex-col items-center">
                         {item.isHold ? (
-                          /* Active Hold Node: Orange (#FF6600) circle with white truck icon */
-                          <div className="w-10 h-10 rounded-full bg-[#FF6600] flex items-center justify-center text-white shrink-0 shadow-sm z-10">
+                          /* Active Hold Node: Orange (#FF6600) circle with white truck icon & alert ring */
+                          <div className="w-10 h-10 rounded-full bg-[#FF6600] flex items-center justify-center text-white shrink-0 shadow-md ring-4 ring-red-500/25 z-10">
                             <Truck className="w-5 h-5 text-white" />
                           </div>
                         ) : item.isActive ? (
-                          /* Active Node: Highlighted FedEx Purple icon with truck */
-                          <div className="w-10 h-10 rounded-full bg-[#4D148C] text-white flex items-center justify-center shrink-0 shadow-md ring-4 ring-[#4D148C]/20 z-10">
+                          /* Current Active Node: Iconic FedEx Orange (#FF6600) circle with white truck icon */
+                          <div className="w-10 h-10 rounded-full bg-[#FF6600] text-white flex items-center justify-center shrink-0 shadow-md ring-4 ring-[#FF6600]/25 z-10">
                             <Truck className="w-5 h-5 text-white" />
                           </div>
                         ) : item.isCompleted ? (
@@ -788,16 +807,18 @@ export default function TrackingPortal({ initialId }: { initialId?: string } = {
                             <p className="text-base font-bold text-[#FF2D20]">
                               {item.title}
                             </p>
-                            <span className="px-2 py-0.5 rounded-md bg-red-50 border border-red-200 text-[#FF2D20] text-[10px] font-bold tracking-wider uppercase">
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-red-50 border border-red-200 text-[#FF2D20] text-[10px] font-bold tracking-wider uppercase">
+                              <AlertTriangle className="w-3 h-3 text-[#FF2D20]" />
                               ON HOLD
                             </span>
                           </div>
                         ) : item.isActive ? (
                           <div className="flex items-center gap-2 flex-wrap">
-                            <p className="text-base font-bold text-[#4D148C]">
+                            <p className="text-base font-bold text-[#FF6600]">
                               {item.title}
                             </p>
-                            <span className="px-2 py-0.5 rounded-md bg-[#4D148C]/10 border border-[#4D148C]/20 text-[#4D148C] text-[10px] font-bold tracking-wider uppercase">
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-[#FF6600]/10 border border-[#FF6600]/30 text-[#FF6600] text-[10px] font-bold tracking-wider uppercase">
+                              <Truck className="w-3 h-3 text-[#FF6600]" />
                               CURRENT
                             </span>
                           </div>
