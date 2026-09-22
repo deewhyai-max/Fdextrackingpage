@@ -15,7 +15,11 @@ import {
   AlertCircle,
   Check,
   ArrowRight,
-  Share2
+  Share2,
+  Eye,
+  EyeOff,
+  ChevronDown,
+  ChevronUp
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { supabase, Shipment, ShipmentStatus, TrackingHistory } from '@/src/lib/supabase';
@@ -87,6 +91,7 @@ export default function TrackingPortal({ initialId }: { initialId?: string } = {
   const [errorStatus, setErrorStatus] = useState<string | null>(null);
   const [clockNow, setClockNow] = useState<Date>(() => new Date());
   const [copiedLink, setCopiedLink] = useState(false);
+  const [showPackageInfo, setShowPackageInfo] = useState(false);
 
   // Format ID in 4-digit blocks
   const formatId = (value: string) => {
@@ -567,15 +572,6 @@ export default function TrackingPortal({ initialId }: { initialId?: string } = {
                 )}>
                   {isEffectiveOnHold ? 'ON HOLD' : activeStageName}
                 </h1>
-                {packageName && (
-                  <div className="flex items-center gap-1.5 pt-1">
-                    <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-100 border border-slate-200/80 text-xs font-bold text-slate-800">
-                      <Package className="w-3.5 h-3.5 text-[#FF6600] shrink-0" />
-                      <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">Package:</span>
-                      <span className="text-slate-900 font-bold">{packageName}</span>
-                    </span>
-                  </div>
-                )}
               </div>
 
               <div className="text-right space-y-0.5">
@@ -653,6 +649,62 @@ export default function TrackingPortal({ initialId }: { initialId?: string } = {
               </div>
             )}
 
+            {/* View Package Name & Information Collapsible - Placed under Sender & Receiver names */}
+            {packageName && (
+              <div className="bg-[#FBFBFC] border border-slate-200/75 rounded-2xl overflow-hidden shadow-2xs transition-all">
+                <button
+                  type="button"
+                  id="toggle_package_info_btn"
+                  onClick={() => setShowPackageInfo(prev => !prev)}
+                  className="w-full p-4 flex items-center justify-between text-left hover:bg-slate-50/80 transition-colors cursor-pointer group"
+                  aria-expanded={showPackageInfo}
+                >
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-8 h-8 rounded-xl bg-orange-50 border border-orange-200/60 flex items-center justify-center text-[#FF6600] shrink-0 group-hover:scale-105 transition-transform">
+                      <Package className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <p className="text-xs md:text-sm font-bold text-slate-800 group-hover:text-[#4D148C] transition-colors">
+                        View package name and information
+                      </p>
+                      <p className="text-[10px] text-slate-400 font-medium">
+                        {showPackageInfo ? 'Click to collapse' : 'Click to reveal package details'}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1 text-slate-400 group-hover:text-[#4D148C]">
+                    <span className="text-[11px] font-semibold hidden sm:inline">
+                      {showPackageInfo ? 'Hide' : 'View'}
+                    </span>
+                    {showPackageInfo ? (
+                      <ChevronUp className="w-4 h-4" />
+                    ) : (
+                      <ChevronDown className="w-4 h-4" />
+                    )}
+                  </div>
+                </button>
+
+                <AnimatePresence>
+                  {showPackageInfo && (
+                    <motion.div
+                      initial={{ opacity: 0, height: 0 }}
+                      animate={{ opacity: 1, height: 'auto' }}
+                      exit={{ opacity: 0, height: 0 }}
+                      transition={{ duration: 0.2 }}
+                      className="border-t border-slate-200/60 bg-white px-5 py-4 space-y-2"
+                    >
+                      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                        Package Name / Contents Information
+                      </p>
+                      <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200/80 text-sm font-semibold text-slate-900 leading-relaxed break-words whitespace-pre-wrap">
+                        {packageName}
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
+            )}
+
             {/* FedEx Package Specifications Card (IMG_1765.png reference) */}
             <div className="bg-[#FBFBFC] border border-slate-200/75 rounded-2xl p-5 space-y-3 shadow-2xs">
               <div className="flex items-center justify-between">
@@ -669,15 +721,6 @@ export default function TrackingPortal({ initialId }: { initialId?: string } = {
                 )}
               </div>
               <div className="grid grid-cols-2 gap-4 pt-1">
-                {packageName && (
-                  <div className="space-y-0.5 col-span-2 pb-2.5 mb-1 border-b border-slate-200/60">
-                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Package / Shipment Name</p>
-                    <p className="text-sm md:text-base font-extrabold text-slate-900 flex items-center gap-2">
-                      <Package className="w-4 h-4 text-[#FF6600] shrink-0" />
-                      <span>{packageName}</span>
-                    </p>
-                  </div>
-                )}
                 <div className="space-y-0.5">
                   <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Package Type</p>
                   <p className="text-sm font-bold text-slate-900">{shipment.package_type || 'FedEx Box'}</p>

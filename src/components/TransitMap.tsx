@@ -637,19 +637,11 @@ export default function TransitMap({
               )}
             </div>
 
-            {/* Receiver Name, Package Name, and Destination Location */}
+            {/* Receiver Name and Destination Location */}
             <div className="pt-0.5 space-y-0.5">
-              <div className="flex flex-wrap items-center gap-2">
-                <h4 className="text-base md:text-lg font-extrabold text-slate-900 leading-tight">
-                  {recipientName || 'Primary Receiver'}
-                </h4>
-                {packageName && (
-                  <span className="inline-flex items-center gap-1 text-[11px] font-bold text-[#4D148C] bg-[#4D148C]/10 border border-[#4D148C]/20 px-2 py-0.5 rounded-md">
-                    <Package className="w-3 h-3 text-[#FF6600]" />
-                    <span>{packageName}</span>
-                  </span>
-                )}
-              </div>
+              <h4 className="text-base md:text-lg font-extrabold text-slate-900 leading-tight">
+                {recipientName || 'Primary Receiver'}
+              </h4>
               <p className="text-xs md:text-sm font-semibold text-slate-600 flex items-center gap-1.5">
                 <MapPin className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
                 <span>{effectiveDestination}</span>
