@@ -1,6 +1,6 @@
 {
   "name": "FedEx Tracking Portal",
-  "description": "Track real-time shipment status, delivery schedules, transit checkpoints, and automated routing updates with FedEx Tracking.",
+  "description": "Track real-time shipment status, delivery schedules, transit checkpoints, and automated routing updates.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }
