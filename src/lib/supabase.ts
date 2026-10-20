@@ -7,11 +7,11 @@ export const supabase = createClient(supabaseUrl, supabaseKey);
 
 export type ShipmentStatus = 
   | 'Shipping label created'
-  | 'Package received by FedEx'
+  | 'Package received by carrier'
   | 'In Transit'
   | 'On the way'
   | 'Arriving at destination facility'
-  | 'At local FedEx facility'
+  | 'At local carrier facility'
   | 'Out for Delivery'
   | 'Delivered'
   | 'On Hold';
