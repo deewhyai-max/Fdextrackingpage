@@ -28,14 +28,14 @@ import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import TransitMap from './TransitMap';
 
-// Standard 8-Stage Sequential FedEx Logistics Stages
+// Standard 8-stage shipment tracking milestones
 export const MASTER_STAGES: ShipmentStatus[] = [
   'Shipping label created',
-  'Package received by FedEx',
+  'Package received by carrier',
   'In Transit',
   'On the way',
   'Arriving at destination facility',
-  'At local FedEx facility',
+  'At local carrier facility',
   'Out for Delivery',
   'Delivered'
 ];
@@ -63,7 +63,7 @@ export function findStageIndex(statusStr?: string | null): number {
   if (clean === 'in transit') return 2;
   if (clean === 'on the way') return 3;
   if (clean.includes('arriving at destination')) return 4;
-  if (clean.includes('local fedex facility') || clean.includes('local facility') || clean.includes('at local')) return 5;
+  if (clean.includes('local fedex facility') || clean.includes('local carrier facility') || clean.includes('local facility') || clean.includes('at local')) return 5;
   if (clean.includes('out for delivery')) return 6;
   if (clean.includes('delivered')) return 7;
 
@@ -323,7 +323,7 @@ export default function TrackingPortal({ initialId }: { initialId?: string } = {
   };
 
   // Locations
-  const originLoc = shipment?.origin_city_state || shipment?.sender_address || shipment?.origin || 'FedEx Origin Hub';
+  const originLoc = shipment?.origin_city_state || shipment?.sender_address || shipment?.origin || 'Origin facility';
   const destinationLoc = shipment?.destination_address || shipment?.receiver_address || shipment?.recipient_address || shipment?.destination || 'Destination Address';
 
   // Array Deduplication, Sequential Order (1 to 8), Single Active Hold Node, and Strict Completed vs. Upcoming
@@ -458,7 +458,7 @@ export default function TrackingPortal({ initialId }: { initialId?: string } = {
 
       const location = isHoldNode && latestHoldEntry?.location
         ? latestHoldEntry.location
-        : (entry?.location || (idx === 7 ? destinationLoc : (idx === 0 ? originLoc : (shipment.origin_city_state || 'FedEx Facility'))));
+        : (entry?.location || (idx === 7 ? destinationLoc : (idx === 0 ? originLoc : (shipment.origin_city_state || 'Carrier facility'))));
 
       const timestamp = isHoldNode && latestHoldEntry?.timestamp
         ? latestHoldEntry.timestamp
@@ -498,10 +498,10 @@ export default function TrackingPortal({ initialId }: { initialId?: string } = {
 
   return (
     <div className="min-h-screen bg-white font-sans text-[#141414]">
-      {/* Top FedEx Purple Accent Line */}
+      {/* Top accent line */}
       <div className="h-2.5 bg-[#4D148C] w-full" />
 
-      {/* Clean White Header with Centered FedEx Logo (Identical to IMG_1764 & IMG_1765) */}
+      {/* Neutral shipment-tracking header */}
       <header className="sticky top-0 bg-white border-b border-slate-100 py-3.5 px-4 z-40 flex items-center justify-center shadow-2xs">
         <div className="flex items-center select-none">
           <span className="text-3xl md:text-4xl font-black text-[#4D148C] tracking-tight">Fed</span>
@@ -616,7 +616,7 @@ export default function TrackingPortal({ initialId }: { initialId?: string } = {
                 </p>
                 <div className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-[#E8F8F0] border border-[#B7E8D0] text-[#0D6838] text-xs font-bold shadow-2xs">
                   <Building2 className="w-4 h-4 text-[#0D6838]" />
-                  <span>Hold at FedEx OnSite Location</span>
+                  <span>Hold at carrier pickup location</span>
                 </div>
               </div>
             )}
@@ -705,13 +705,13 @@ export default function TrackingPortal({ initialId }: { initialId?: string } = {
               </div>
             )}
 
-            {/* FedEx Package Specifications Card (IMG_1765.png reference) */}
+            {/* Package specifications card */}
             <div className="bg-[#FBFBFC] border border-slate-200/75 rounded-2xl p-5 space-y-3 shadow-2xs">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2 text-[#4D148C]">
                   <Layers className="w-4 h-4" />
                   <p className="text-xs font-bold uppercase tracking-wider text-[#4D148C]">
-                    FedEx Package Specifications
+                    Package Specifications
                   </p>
                 </div>
                 {shipment.service_type && (
@@ -723,7 +723,7 @@ export default function TrackingPortal({ initialId }: { initialId?: string } = {
               <div className="grid grid-cols-2 gap-4 pt-1">
                 <div className="space-y-0.5">
                   <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Package Type</p>
-                  <p className="text-sm font-bold text-slate-900">{shipment.package_type || 'FedEx Box'}</p>
+                  <p className="text-sm font-bold text-slate-900">{shipment.package_type || 'Standard box'}</p>
                 </div>
                 <div className="space-y-0.5">
                   <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Total Pieces</p>
@@ -827,7 +827,7 @@ export default function TrackingPortal({ initialId }: { initialId?: string } = {
                   Shipment History Milestones
                 </h3>
                 <p className="text-xs font-bold text-[#4D148C] text-right">
-                  Standardized FedEx Logistics Network
+                  Shipment tracking milestones
                 </p>
               </div>
 
@@ -848,7 +848,7 @@ export default function TrackingPortal({ initialId }: { initialId?: string } = {
                             <Truck className="w-5 h-5 text-white" />
                           </div>
                         ) : item.isActive ? (
-                          /* Current Active Node: Iconic FedEx Orange (#FF6600) circle with white truck icon */
+                          /* Current active milestone node */
                           <div className="w-10 h-10 rounded-full bg-[#FF6600] text-white flex items-center justify-center shrink-0 shadow-md ring-4 ring-[#FF6600]/25 z-10">
                             <Truck className="w-5 h-5 text-white" />
                           </div>
@@ -926,7 +926,7 @@ export default function TrackingPortal({ initialId }: { initialId?: string } = {
         ) : loading ? (
           <div className="text-center py-20 space-y-4">
             <div className="w-10 h-10 border-3 border-[#4D148C] border-t-transparent rounded-full animate-spin mx-auto" />
-            <p className="text-sm font-semibold text-[#4D148C]">Searching FedEx logistics network...</p>
+            <p className="text-sm font-semibold text-[#4D148C]">Searching shipment records...</p>
           </div>
         ) : hasSearched ? (
           <div className="text-center py-20 px-4 space-y-3">
